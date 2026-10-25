@@ -1,8 +1,10 @@
+import { createRemoteRules } from "./remote-rules.js";
+import { Problem } from "./problems.js";
+export { Problem } from "./problems.js";
 import { Database } from "bun:sqlite";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, existsSync, lstatSync } from "node:fs";
 import { dirname } from "node:path";
-export class Problem extends Error { constructor(public status: number, message: string) { super(message); } }
 const hash = (key: string) => createHash("sha256").update(key).digest("hex");
 export function text(value: unknown, max: number, trim = true) { if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Problem(400, "Invalid text field"); return trim ? value.trim() : value; }
 export function uuid(value: unknown) { if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Problem(400, "Expected UUID v4"); return value; }
@@ -18,6 +20,7 @@ export function createStore(path: string) {
   CREATE TABLE IF NOT EXISTS sessions (authorization_id TEXT NOT NULL,deployment_id TEXT NOT NULL,id TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,PRIMARY KEY(authorization_id,deployment_id,id),FOREIGN KEY(authorization_id,deployment_id) REFERENCES deployments(authorization_id,id));
   CREATE TABLE IF NOT EXISTS briefs (id TEXT PRIMARY KEY,authorization_id TEXT NOT NULL REFERENCES authorizations(id),name TEXT NOT NULL,text TEXT NOT NULL,updated_at TEXT NOT NULL);`);
   if (!db.query("SELECT id FROM meta").get()) db.query("INSERT INTO meta VALUES (?)").run(randomUUID());
+  const remoteRules=createRemoteRules(db);
   const serverId = (db.query("SELECT id FROM meta").get() as {id:string}).id;
   function issue(name: unknown) {
     const label = text(name,100); const id=randomUUID(); const key=`bsv1_${randomBytes(32).toString("base64url")}`;
@@ -38,7 +41,7 @@ export function createStore(path: string) {
     if(!sessionExists && (db.query("SELECT count(*) AS n FROM sessions WHERE authorization_id=?").get(auth) as {n:number}).n>=10000)throw new Problem(429,"Session limit reached");
     db.query("INSERT INTO deployments VALUES (?,?,?,?) ON CONFLICT(authorization_id,id) DO UPDATE SET last_seen=excluded.last_seen").run(auth,d,now,now);
     db.query("INSERT INTO sessions VALUES (?,?,?,?,?) ON CONFLICT(authorization_id,deployment_id,id) DO UPDATE SET last_seen=excluded.last_seen").run(auth,d,s,now,now);
-    return {serverId,authorizationId:auth,briefs:briefs(auth).map(b=>({...b,id:`remote:${serverId}:${auth}:${b.id}`,builtin:false,source:"remote" as const}))};
+    return {serverId,authorizationId:auth,remoteRules:remoteRules.delivery(auth,serverId),briefs:briefs(auth).map(b=>({...b,id:`remote:${serverId}:${auth}:${b.id}`,builtin:false,source:"remote" as const}))};
   });
   function snapshot() { return {serverId,authorizations:(db.query("SELECT id,name,created_at AS createdAt,revoked_at AS revokedAt FROM authorizations ORDER BY created_at").all() as {id:string}[]).map(a=>({...a, deployments:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM deployments WHERE authorization_id=?").all(a.id) as {id:string}[]).map(d=>({...d,sessions:db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM sessions WHERE authorization_id=? AND deployment_id=? ORDER BY first_seen").all(a.id,d.id)}))})),briefs:db.query("SELECT id,authorization_id AS authorizationId,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at").all()}; }
   function revoke(id: string) {if (!db.query("UPDATE authorizations SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(new Date().toISOString(),id).changes) throw new Problem(404,"Active authorization not found");}
@@ -50,6 +53,6 @@ export function createStore(path: string) {
     else {if ((db.query("SELECT count(*) AS n FROM briefs WHERE authorization_id=?").get(auth) as {n:number}).n>=100) throw new Problem(400,"Brief limit reached"); id=randomUUID(); db.query("INSERT INTO briefs VALUES (?,?,?,?,?)").run(id,auth,name,content,new Date().toISOString());} return {id};
   }
   function deleteBrief(id:string) {if(!db.query("DELETE FROM briefs WHERE id=?").run(uuid(id)).changes) throw new Problem(404,"Brief not found");}
-  return {issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
+  return {remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
 }
 export type Store = ReturnType<typeof createStore>;

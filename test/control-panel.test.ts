@@ -13,8 +13,8 @@ function temporary(){return mkdtempSync(join(tmpdir(),'butchr-servr-test-'));}
 test('restart persistence, scoped briefs, reconnect deduplication and revocation',()=>{
  const dir=temporary(),path=join(dir,'test.sqlite');let s=fixture(path);try{
  const d=randomUUID(),session=randomUUID();s.saveBrief({authorizationId:auth,name:'Review',text:'# Safe remote instructions'});
- s.connect(auth,d,session);s.connect(auth,d,session);expect(s.snapshot().authorizations[0]!.deployments[0]!.sessions.length).toBe(1);
- s.close();s=createStore(path);expect(s.authenticate(key)).toBe(auth);expect(s.connect(auth,d,session).briefs).toHaveLength(1);expect(s.snapshot().authorizations[0]!.deployments[0]!.sessions).toHaveLength(1);
+ s.remoteRules.create(auth,{id:'persistent-remote',resourceProvider:'jira-work',query:'project = DISPOSABLE',confirm:true});const beforeRules=s.remoteRules.delivery(auth,s.snapshot().serverId);s.connect(auth,d,session);s.connect(auth,d,session);expect(s.snapshot().authorizations[0]!.deployments[0]!.sessions.length).toBe(1);
+ s.close();s=createStore(path);expect(s.authenticate(key)).toBe(auth);expect(s.remoteRules.delivery(auth,s.snapshot().serverId)).toEqual(beforeRules);expect(s.connect(auth,d,session).briefs).toHaveLength(1);expect(s.snapshot().authorizations[0]!.deployments[0]!.sessions).toHaveLength(1);
  s.revoke(auth);expect(()=>s.authenticate(key)).toThrow('Invalid or revoked');expect(()=>s.authenticate('invalid')).toThrow();
  expect(statSync(path).mode&0o777).toBe(0o600);
  }finally{s.close();rmSync(dir,{recursive:true,force:true});}

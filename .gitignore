@@ -7,3 +7,5 @@ node_modules
 *.db
 *.pem
 *.key
+web-dist/
+web-dist-next/
