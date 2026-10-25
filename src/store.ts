@@ -4,7 +4,7 @@ import { chmodSync, mkdirSync, existsSync, lstatSync } from "node:fs";
 import { dirname } from "node:path";
 export class Problem extends Error { constructor(public status: number, message: string) { super(message); } }
 const hash = (key: string) => createHash("sha256").update(key).digest("hex");
-export function text(value: unknown, max: number) { if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Problem(400, "Invalid text field"); return value.trim(); }
+export function text(value: unknown, max: number, trim = true) { if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Problem(400, "Invalid text field"); return trim ? value.trim() : value; }
 export function uuid(value: unknown) { if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Problem(400, "Expected UUID v4"); return value; }
 export function createStore(path: string) {
   if (path !== ":memory:") mkdirSync(dirname(path), {recursive: true, mode: 0o700});
@@ -43,7 +43,8 @@ export function createStore(path: string) {
   function snapshot() { return {serverId,authorizations:(db.query("SELECT id,name,created_at AS createdAt,revoked_at AS revokedAt FROM authorizations ORDER BY created_at").all() as {id:string}[]).map(a=>({...a, deployments:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM deployments WHERE authorization_id=?").all(a.id) as {id:string}[]).map(d=>({...d,sessions:db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM sessions WHERE authorization_id=? AND deployment_id=? ORDER BY first_seen").all(a.id,d.id)}))})),briefs:db.query("SELECT id,authorization_id AS authorizationId,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at").all()}; }
   function revoke(id: string) {if (!db.query("UPDATE authorizations SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(new Date().toISOString(),id).changes) throw new Problem(404,"Active authorization not found");}
   function saveBrief(input: any, id?: string) {
-    const auth=uuid(input.authorizationId), name=text(input.name,100), content=text(input.text,200000);
+    const auth=uuid(input.authorizationId), name=text(input.name,100), content=text(input.text,200000,false);
+    if (/[\x00-\x1f\x7f]/.test(name) || content.startsWith("@builtin:")) throw new Problem(400,"Brief must have a single-line name and instructions, not a built-in reference");
     if (!db.query("SELECT id FROM authorizations WHERE id=? AND revoked_at IS NULL").get(auth)) throw new Problem(400,"Choose an active authorization");
     if (id) {if (!db.query("UPDATE briefs SET name=?,text=?,updated_at=? WHERE id=? AND authorization_id=?").run(name,content,new Date().toISOString(),uuid(id),auth).changes) throw new Problem(404,"Brief not found");}
     else {if ((db.query("SELECT count(*) AS n FROM briefs WHERE authorization_id=?").get(auth) as {n:number}).n>=100) throw new Problem(400,"Brief limit reached"); id=randomUUID(); db.query("INSERT INTO briefs VALUES (?,?,?,?,?)").run(id,auth,name,content,new Date().toISOString());} return {id};

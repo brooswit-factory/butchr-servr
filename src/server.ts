@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
 const baseHeaders = {"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","content-security-policy":"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
-export function serve(store: Store, port=7731, allowIssuance=false) {
+export function serve(store: Store, port=7731) {
   const rates=new Map<string,{count:number;start:number}>();
   const csrf=randomBytes(32).toString("base64url");
   const json=(body:unknown,status=200)=>Response.json(body,{status,headers:baseHeaders});
@@ -26,8 +26,8 @@ export function serve(store: Store, port=7731, allowIssuance=false) {
         if(o!==origin || token.length!==csrf.length || !timingSafeEqual(Buffer.from(token),Buffer.from(csrf))) throw new Problem(403,"CSRF check failed");
         if(!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
       }
-      if(req.method==="GET" && url.pathname==="/api/state") return json({...store.snapshot(),csrf,issuanceEnabled:allowIssuance});
-      if(req.method==="POST" && url.pathname==="/api/authorizations") {if(!allowIssuance) throw new Problem(403,"Real key issuance awaits security approval"); return json(store.issue((await req.json()).name),201);}
+      if(req.method==="GET" && url.pathname==="/api/state") return json({...store.snapshot(),csrf});
+      if(req.method==="POST" && url.pathname==="/api/authorizations") {return json(store.issue((await req.json()).name),201);}
       const revoke=/^\/api\/authorizations\/([^/]+)\/revoke$/.exec(url.pathname);
       if(req.method==="POST" && revoke) {store.revoke(revoke[1]!);return json({ok:true});}
       if(req.method==="POST" && url.pathname==="/api/briefs") return json(store.saveBrief(await req.json()),201);
