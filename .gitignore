@@ -1,2 +1,9 @@
 runtime/
-node_modules/
+node_modules
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.pem
+*.key
