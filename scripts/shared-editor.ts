@@ -6,6 +6,11 @@ export function sharedEditorForServer(source:string,id:string):string {
   if(!source.includes(from))throw Error('Shared review copy changed; review the pinned integration.');
   return source.replace(from,'Stored for this authorization one change at a time. Clients receive the definitions on their next sync.');
  }
+ if(id.endsWith('/rules-save.ts')){
+  const from='Removes the rule from rules.json. butchr keeps a backup of the file.';
+  if(!source.includes(from))throw Error('Shared deletion copy changed; review the pinned integration.');
+  return source.replace(from,'Removes the disabled rule from this authorization. Clients remove it on their next sync.');
+ }
  if(!id.endsWith('/RuleEditor.tsx'))return source;
  const replacements:[string,string][]=[
  ['const names = known.map((b) => b.name);','const names = known.filter((b) => !b.customId).map((b) => b.name);'],
