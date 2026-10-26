@@ -1,0 +1,22 @@
+[Unit]
+Description=Butchr control panel
+After=network.target
+[Service]
+User=butchr-servr
+Group=butchr-servr
+WorkingDirectory=/opt/butchr-servr/current
+Environment=BUTCHR_SERVR_PUBLIC_ORIGIN=https://butchr.brooswit.nexus
+Environment=BUTCHR_SERVR_DB=/var/lib/butchr-servr/control.sqlite
+ExecStart=/usr/local/bin/bun src/index.ts
+Restart=on-failure
+RestartSec=3
+UMask=0077
+StateDirectory=butchr-servr
+StateDirectoryMode=0700
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=600M
+[Install]
+WantedBy=multi-user.target

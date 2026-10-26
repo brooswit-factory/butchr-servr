@@ -1,0 +1,24 @@
+[Unit]
+Description=Butchr HTTPS reverse proxy
+After=network-online.target butchr-servr.service
+Wants=network-online.target
+[Service]
+# Same UID is intentional: backend checks the OS owner of each loopback peer.
+User=butchr-servr
+Group=butchr-servr
+Environment=XDG_DATA_HOME=/var/lib/butchr-servr-caddy
+ExecStart=/usr/bin/caddy run --config /etc/butchr-servr/Caddyfile --adapter caddyfile
+Restart=on-failure
+RestartSec=3
+UMask=0077
+StateDirectory=butchr-servr-caddy
+StateDirectoryMode=0700
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+MemoryMax=150M
+[Install]
+WantedBy=multi-user.target

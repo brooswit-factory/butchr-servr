@@ -23,5 +23,5 @@ export function createAdminAuth(db:Database,now=Date.now){
  async function login(req:Request,body:unknown,setup:boolean){begin(req);const value=password((body as {password?:unknown})?.password);if(setup&&configured())throw new Problem(409,'Password already configured');if(!setup&&!configured())throw new Problem(409,'Set up your password first');hashing=true;try{if(setup){const hash=await Bun.password.hash(value,{algorithm:'argon2id',memoryCost:65536,timeCost:3});return db.transaction(()=>{if(!db.query('INSERT OR IGNORE INTO admin_password VALUES (1,?)').run(hash).changes)throw new Problem(409,'Password already configured');return issue();})();}const row=db.query('SELECT hash FROM admin_password WHERE id=1').get() as {hash:string};if(!await Bun.password.verify(value,row.hash))throw new Problem(401,'Incorrect password');return issue();}finally{hashing=false;}}
  function requireSession(req:Request){const active=session(req);if(!active)throw new Problem(401,'Login required');return active;}
  function logout(req:Request){const active=requireSession(req);csrf(req,active.csrf);db.query('DELETE FROM admin_sessions WHERE token_hash=?').run(active.token_hash);return {body:{ok:true},cookie:cookie('',0)};}
- return {status,login,logout,requireSession,csrf};
+ return {status,login,logout,requireSession,csrf,configured};
 }

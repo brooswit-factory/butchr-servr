@@ -2,14 +2,14 @@ import { randomUUID,createHash } from "node:crypto";
 import { Problem, type Store } from "./store.js";
 export const MAX_EVENT_BYTES = 96_000_000;
 /** Per server process: no replay log. Every open explicitly resynchronizes a full snapshot. */
-export function createEventStreams(store:Store,limits={maxEventBytes:MAX_EVENT_BYTES,maxQueuedBytes:192_000_000}){
+export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQueuedBytes:number;maxStreams?:number;maxPerAuthorization?:number}={maxEventBytes:MAX_EVENT_BYTES,maxQueuedBytes:192_000_000,maxStreams:8,maxPerAuthorization:2}){
  const queues=new Set<()=>number>();
  const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
  const active=new Map<string,Set<()=>void>>();
  const encode=new TextEncoder();
  function open(auth:string,signal:AbortSignal){
   const count=[...active.values()].reduce((n,s)=>n+s.size,0);
-  if(count>=8||(active.get(auth)?.size??0)>=2)throw new Problem(429,"Stream limit reached");
+  if(count>=(limits.maxStreams??8)||(active.get(auth)?.size??0)>=(limits.maxPerAuthorization??2))throw new Problem(429,"Stream limit reached");
   const epoch=randomUUID();let sequence=0,revision=`${epoch}:0`,initial:ReturnType<Store["delivery"]>|null=store.delivery(auth),closed=false;
   let hashes={briefs:digest(initial.briefs),remoteRules:digest(initial.remoteRules)};
   let controller:ReadableStreamDefaultController<Uint8Array>,unsubscribe=()=>{},timer:ReturnType<typeof setInterval>;
