@@ -1,3 +1,4 @@
+import {managementScope} from "./management-keys.js";
 import { createEventStreams } from "./events.js";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
@@ -24,10 +25,18 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
         return json(url.pathname==="/v1/register"?{serverId:snapshot.serverId,authorizationId:auth,registered:true}:snapshot);
       }
+      const bearer=req.headers.get('authorization');
+      if(bearer){
+        if(!url.pathname.startsWith('/api/')||url.search||req.headers.has('cookie')||req.headers.has('origin')||(req.headers.get('sec-fetch-site')&&req.headers.get('sec-fetch-site')!=='none'))throw new Problem(403,'Management keys require a non-browser API request');
+        const key=store.managementKeys.authenticate(bearer.startsWith('Bearer ')?bearer.slice(7):'');const scope=managementScope(url.pathname,req.method);
+        const rateId='management:'+key.id,now=Date.now(),rate=rates.get(rateId);if(rate&&now-rate.start<60000){if(++rate.count>120)throw new Problem(429,'Try again shortly');}else rates.set(rateId,{count:1,start:now});
+        if(!scope||!key.scopes.includes(scope)||(scope==='rules:read'&&url.pathname.endsWith('/catalog')&&!key.scopes.includes('briefs:read')))throw new Problem(403,'Management scope required');
+        store.managementKeys.touch(key.id);
+      }
       if(!(await isSameUidPeerAsync(peer,{server:{address:"127.0.0.1",port:server.port!}}))) throw new Problem(403,"Same user required");
       const o=req.headers.get("origin"), site=req.headers.get("sec-fetch-site");
       if((o && o!==origin)||(site && !["same-origin","none"].includes(site))) throw new Problem(403,"Same origin required");
-      if(!["GET","HEAD"].includes(req.method)&& (o!==origin||!req.headers.get("content-type")?.startsWith("application/json")))throw new Problem(403,"Same-origin JSON required");
+      if(!["GET","HEAD"].includes(req.method)&& ((!bearer&&o!==origin)||!req.headers.get("content-type")?.startsWith("application/json")))throw new Problem(403,"Same-origin JSON required");
       const authResponse=(result:{body:unknown;cookie:string|null})=>{const response=json(result.body);if(result.cookie)response.headers.set('set-cookie',result.cookie);return response;};
       if(req.method==='GET'&&url.pathname==='/api/auth/session')return authResponse(store.adminAuth.status(req));
       if(req.method==='POST'&&['/api/auth/login','/api/auth/setup'].includes(url.pathname)){
@@ -37,7 +46,14 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
       }
       if(req.method==='POST'&&url.pathname==='/api/auth/logout')return authResponse(store.adminAuth.logout(req));
       let csrf='';
-      if(url.pathname.startsWith('/api/')){const active=store.adminAuth.requireSession(req);csrf=active.csrf;if(!['GET','HEAD'].includes(req.method))store.adminAuth.csrf(req,csrf);}
+      if(url.pathname.startsWith('/api/')&&!bearer){const active=store.adminAuth.requireSession(req);csrf=active.csrf;if(!['GET','HEAD'].includes(req.method))store.adminAuth.csrf(req,csrf);}
+      if(req.method==='GET'&&url.pathname==='/api/management-keys')return json({keys:store.managementKeys.list()});
+      if(req.method==='POST'&&url.pathname==='/api/management-keys')return json(store.managementKeys.issue(await req.json()),201);
+      const managementRevoke=/^\/api\/management-keys\/([0-9a-f-]{36})\/revoke$/.exec(url.pathname);
+      if(req.method==='POST'&&managementRevoke)return json(store.managementKeys.revoke(managementRevoke[1]!));
+      if(req.method==='GET'&&url.pathname==='/api/authorizations')return json({authorizations:store.snapshot().authorizations.map(({deployments,...a})=>a)});
+      if(req.method==='GET'&&url.pathname==='/api/deployments')return json({authorizations:store.snapshot().authorizations});
+      if(req.method==='GET'&&url.pathname==='/api/briefs')return json({briefs:store.snapshot().briefs});
       if(req.method==='POST'&&url.pathname==='/api/auth/activity')return json({ok:true});
       if(req.method==="GET" && url.pathname==="/api/state") return json({...store.snapshot(),csrf});
       if(req.method==="POST" && url.pathname==="/api/authorizations") {return json(store.issue((await req.json()).name),201);}
@@ -62,7 +78,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         const name=url.pathname.slice(8);if(!/^[a-zA-Z0-9_.-]+$/.test(name))throw new Problem(404,"Asset not found");
         const file=Bun.file(new URL(`assets/${name}`,webRoot));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers:baseHeaders});
       }
-      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
+      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/management-keys"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
         const file=Bun.file(new URL("web/control-panel.html",webRoot));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers:baseHeaders});
       }
       return json({error:"Not found"},404);

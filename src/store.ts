@@ -1,3 +1,4 @@
+import {createManagementKeys} from "./management-keys.js";
 import {createAdminAuth} from "./admin-auth.js";
 import {createTelemetry} from "./telemetry.js";
 import { createRemoteRules } from "./remote-rules.js";
@@ -28,6 +29,7 @@ export function createStore(path: string) {
   })();
   if (!db.query("SELECT id FROM meta").get()) db.query("INSERT INTO meta VALUES (?)").run(randomUUID());
   const adminAuth=createAdminAuth(db);
+  const managementKeys=createManagementKeys(db);
   const telemetry=createTelemetry(db);
   const listeners=new Set<(auth:string,revoked:boolean)=>void>();
   function notify(auth:string,revoked=false){for(const listener of listeners)listener(auth,revoked);}
@@ -71,6 +73,6 @@ export function createStore(path: string) {
   }
   function deleteBrief(id:string){if(!db.query("DELETE FROM briefs WHERE id=?").run(uuid(id)).changes)throw new Problem(404,"Brief not found");notify('*');}
 
-  return {adminAuth,telemetry,delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
+  return {managementKeys,adminAuth,telemetry,delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
 }
 export type Store = ReturnType<typeof createStore>;

@@ -9,3 +9,6 @@ node_modules
 *.key
 web-dist/
 web-dist-next/
+
+__pycache__/
+*.pyc
