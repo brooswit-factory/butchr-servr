@@ -1,13 +1,11 @@
 import { createEventStreams } from "./events.js";
-import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
 const baseHeaders = {"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","content-security-policy":"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
 export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",import.meta.url)) {
   const streams=createEventStreams(store);
   const rates=new Map<string,{count:number;start:number}>();
-  const csrf=randomBytes(32).toString("base64url");
-  const json=(body:unknown,status=200)=>Response.json(body,{status,headers:baseHeaders});
+  const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{...baseHeaders,...(status===429?{"retry-after":"60"}:{})}});
   const server=Bun.serve({hostname:"127.0.0.1",port,idleTimeout:60,maxRequestBodySize:1024*1024,error(){return new Response(null,{status:500,headers:baseHeaders});},async fetch(req,server) {
     try {
       const url=new URL(req.url); const origin=`http://127.0.0.1:${server.port}`;
@@ -29,11 +27,18 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
       if(!(await isSameUidPeerAsync(peer,{server:{address:"127.0.0.1",port:server.port!}}))) throw new Problem(403,"Same user required");
       const o=req.headers.get("origin"), site=req.headers.get("sec-fetch-site");
       if((o && o!==origin)||(site && !["same-origin","none"].includes(site))) throw new Problem(403,"Same origin required");
-      if(!["GET","HEAD"].includes(req.method)) {
-        const token=req.headers.get("x-butchr-servr-csrf")??"";
-        if(o!==origin || token.length!==csrf.length || !timingSafeEqual(Buffer.from(token),Buffer.from(csrf))) throw new Problem(403,"CSRF check failed");
-        if(!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
+      if(!["GET","HEAD"].includes(req.method)&& (o!==origin||!req.headers.get("content-type")?.startsWith("application/json")))throw new Problem(403,"Same-origin JSON required");
+      const authResponse=(result:{body:unknown;cookie:string|null})=>{const response=json(result.body);if(result.cookie)response.headers.set('set-cookie',result.cookie);return response;};
+      if(req.method==='GET'&&url.pathname==='/api/auth/session')return authResponse(store.adminAuth.status(req));
+      if(req.method==='POST'&&['/api/auth/login','/api/auth/setup'].includes(url.pathname)){
+        if(Number(req.headers.get('content-length'))>4096)throw new Problem(413,'Login request too large');
+        const raw=await req.text();if(Buffer.byteLength(raw)>4096)throw new Problem(413,'Login request too large');
+        return authResponse(await store.adminAuth.login(req,JSON.parse(raw),url.pathname.endsWith('/setup')));
       }
+      if(req.method==='POST'&&url.pathname==='/api/auth/logout')return authResponse(store.adminAuth.logout(req));
+      let csrf='';
+      if(url.pathname.startsWith('/api/')){const active=store.adminAuth.requireSession(req);csrf=active.csrf;if(!['GET','HEAD'].includes(req.method))store.adminAuth.csrf(req,csrf);}
+      if(req.method==='POST'&&url.pathname==='/api/auth/activity')return json({ok:true});
       if(req.method==="GET" && url.pathname==="/api/state") return json({...store.snapshot(),csrf});
       if(req.method==="POST" && url.pathname==="/api/authorizations") {return json(store.issue((await req.json()).name),201);}
       const revoke=/^\/api\/authorizations\/([^/]+)\/revoke$/.exec(url.pathname);
@@ -57,7 +62,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         const name=url.pathname.slice(8);if(!/^[a-zA-Z0-9_.-]+$/.test(name))throw new Problem(404,"Asset not found");
         const file=Bun.file(new URL(`assets/${name}`,webRoot));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers:baseHeaders});
       }
-      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
+      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
         const file=Bun.file(new URL("web/control-panel.html",webRoot));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers:baseHeaders});
       }
       return json({error:"Not found"},404);

@@ -1,3 +1,4 @@
+import {adminFixture} from "./admin-helper.js";
 import {test,expect} from "bun:test";
 import {createStore} from "../src/store.js";
 import {serve} from "../src/server.js";
@@ -24,8 +25,8 @@ test('same provider syntax/field validation as Butchr rejects incompatible remot
 });
 test('real HTTP rule routes keep CSRF, authorization scoping and machine-key separation',async()=>{
  const s=createStore(':memory:'),server=serve(s,0),url=`http://127.0.0.1:${server.port}`;
- try{const a=s.issue('Memory A'),b=s.issue('Memory B');const state=await(await fetch(url+'/api/state')).json();const base=`${url}/api/authorizations/${a.id}/rules`;
- const call=(path:string,method='GET',body?:unknown,csrf=state.csrf)=>fetch(path,{method,headers:{origin:url,'content-type':'application/json','x-butchr-servr-csrf':csrf},...(body?{body:JSON.stringify(body)}:{})});
+ try{const a=s.issue('Memory A'),b=s.issue('Memory B');const state=await adminFixture(url);const base=`${url}/api/authorizations/${a.id}/rules`;
+ const call=(path:string,method='GET',body?:unknown,csrf=state.csrf)=>fetch(path,{method,headers:{origin:url,cookie:state.cookie,'content-type':'application/json','x-butchr-servr-csrf':csrf},...(body?{body:JSON.stringify(body)}:{})});
  expect((await call(base,'POST',{...draft,confirm:true},'missing')).status).toBe(403);expect((await call(base,'POST',{...draft,confirm:true})).status).toBe(200);expect((await call(base,'POST',{...draft,id:'catalog',confirm:true})).status).toBe(200);expect((await(await call(base+'/catalog/details')).json()).brief).toBe(draft.brief);expect((await(await call(base+'/catalog')).json()).capacityRoles.values).toContain('worker');
  expect((await(await call(`${url}/api/authorizations/${b.id}/rules`)).json()).rules).toEqual([]);
  const connect=async(key:string)=>fetch(url+'/v1/connect',{method:'POST',headers:{'content-type':'application/json',authorization:'Bearer '+key},body:JSON.stringify({deploymentId:crypto.randomUUID(),sessionId:crypto.randomUUID()})});
