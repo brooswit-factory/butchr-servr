@@ -1,22 +1,29 @@
+import { createEventStreams } from "./events.js";
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
 const baseHeaders = {"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","content-security-policy":"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
 export function serve(store: Store, port=7731) {
+  const streams=createEventStreams(store);
   const rates=new Map<string,{count:number;start:number}>();
   const csrf=randomBytes(32).toString("base64url");
   const json=(body:unknown,status=200)=>Response.json(body,{status,headers:baseHeaders});
-  const server=Bun.serve({hostname:"127.0.0.1",port,maxRequestBodySize:1024*1024,async fetch(req,server) {
+  const server=Bun.serve({hostname:"127.0.0.1",port,idleTimeout:60,maxRequestBodySize:1024*1024,error(){return new Response(null,{status:500,headers:baseHeaders});},async fetch(req,server) {
     try {
       const url=new URL(req.url); const origin=`http://127.0.0.1:${server.port}`;
       if(req.headers.get("host")!==new URL(origin).host) throw new Problem(403,"Untrusted host");
       const peer=server.requestIP(req); if(!peer || peer.address!=="127.0.0.1") throw new Problem(403,"Loopback required");
-      if(url.pathname==="/v1/connect" && req.method==="POST") {
+      if(["/v1/connect","/v1/register","/v1/events"].includes(url.pathname)) {
+        if(url.search)throw new Problem(400,"Machine URLs do not accept query parameters");
+        const streaming=url.pathname==="/v1/events";
+        if(req.method!==(streaming?"GET":"POST"))throw new Problem(405,"Method not allowed");
         if(req.headers.get("origin") || (req.headers.get("sec-fetch-site") && req.headers.get("sec-fetch-site")!=="none")) throw new Problem(403,"Machine endpoint");
-        if(!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
+        if(!streaming&&!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
         const auth=store.authenticate(req.headers.get("authorization")?.replace(/^Bearer /,"")??null);
         const now=Date.now();const rate=rates.get(auth);if(rate&&now-rate.start<60000){if(++rate.count>240)throw new Problem(429,"Try again shortly");}else{rates.set(auth,{count:1,start:now});}
-        const body=await req.json(); return json(store.connect(auth,body.deploymentId,body.sessionId));
+        if(streaming){store.registered(auth,req.headers.get("x-butchr-deployment-id"),req.headers.get("x-butchr-session-id"));return streams.open(auth,req.signal);}
+        const body=await req.json(); const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
+        return json(url.pathname==="/v1/register"?{serverId:snapshot.serverId,authorizationId:auth,registered:true}:snapshot);
       }
       if(!(await isSameUidPeerAsync(peer,{server:{address:"127.0.0.1",port:server.port!}}))) throw new Problem(403,"Same user required");
       const o=req.headers.get("origin"), site=req.headers.get("sec-fetch-site");
@@ -54,5 +61,5 @@ export function serve(store: Store, port=7731) {
       }
       return json({error:"Not found"},404);
     } catch(e) {return json({error:e instanceof Problem?e.message:"Request failed"},e instanceof Problem?e.status:400);}
-  }}); return server;
+  }}); const stop=server.stop.bind(server);server.stop=((force?:boolean)=>{streams.close();return stop(force);}) as typeof server.stop;return server;
 }
