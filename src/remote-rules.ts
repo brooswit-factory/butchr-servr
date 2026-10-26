@@ -1,3 +1,5 @@
+import {createRuleImport} from "./rule-import.js";
+import {deliveryRules} from "./migration-document.js";
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { Problem } from "./problems.js";
@@ -8,7 +10,8 @@ import { RULE_FORM_CATALOG, AGENT_ROLES, CAPACITY_ROLE_DEFAULT } from "../vendor
 import { briefFor, knownBriefTypes } from "../vendor/butchr/src/agents/workspace.js";
 export const RULE_CONTRACT_REVISION="683d8982e40b585bac975bb6661d4b98d08edfe4";
 const digest=(value:string)=>createHash("sha256").update(value).digest("hex");
-export function validateRuleDocument(value:unknown):Rule[]{try{return parseRules(value,"remote rules");}catch(e){throw new Problem(400,e instanceof Error?e.message:"Invalid rule definition");}}
+export function validateRuleDocument(value:unknown){return deliveryRules(value);}
+
 export function createRemoteRules(db:Database){
  db.exec("CREATE TABLE IF NOT EXISTS remote_rule_sets (authorization_id TEXT PRIMARY KEY REFERENCES authorizations(id),document TEXT NOT NULL,revision INTEGER NOT NULL)");
  function authorization(auth:string,write=false){const value=db.query("SELECT revoked_at FROM authorizations WHERE id=?").get(auth) as {revoked_at:string|null}|null;if(!value)throw new Problem(404,"Authorization not found");if(write&&value.revoked_at)throw new Problem(403,"Authorization revoked");}
@@ -25,5 +28,6 @@ export function createRemoteRules(db:Database){
  const create=db.transaction((auth:string,body:any)=>{authorization(auth,true);const v=validateRuleCreateInput(body);if(!v.ok)throw new Problem(400,v.error);const input=v.input,state=read(auth);if(state.rules.some(r=>r.id===input.id))throw new Problem(409,"Rule id already exists in this authorization");if(state.rules.length>=100)throw new Problem(400,"At most 100 remote rules are allowed");const raw={...input,enabled:false,brief:input.brief??"@builtin:task",execution:input.execution??"swarm"};const doc=JSON.parse(state.document) as {rules:unknown[]};doc.rules.push(raw);const document=JSON.stringify(doc);validateRuleDocument(doc);if(body.confirm!==true)return {kind:"needs-confirm",plan:{planHash:digest(document),spawned:0,stopped:0,restarted:0,scope:null,scopeUnmeasurable:true,etag:state.etag,requiresConfirm:true,confirmReason:"rule-create"}};return {kind:"created",result:persist(auth,state,document,[input.id])};});
  const remove=db.transaction((auth:string,id:string,body:any)=>{authorization(auth,true);const state=read(auth);if(body.ifMatch!==state.etag)throw new Problem(409,"Rules changed. Reload and review again.");const target=state.rules.find(r=>r.id===id);if(!target)throw new Problem(404,"Rule not found");if(target.enabled)throw new Problem(409,"Disable the rule before deleting it");if(body.confirm!==true)throw new Problem(409,"Confirm deletion before saving");const doc=JSON.parse(state.document) as {rules:Rule[]};doc.rules=doc.rules.filter(r=>r.id!==id);return persist(auth,state,JSON.stringify(doc),[id]);});
  function delivery(auth:string,serverId:string){const s=read(auth);return {revision:s.etag,contractRevision:RULE_CONTRACT_REVISION,rules:s.rules.map(definition=>({id:`remote:${serverId}:${auth}:${definition.id}`,source:"remote" as const,serverId,authorizationId:auth,sourceRuleId:definition.id,definition}))};}
- return {list,catalog,details,plan,create,update,remove,delivery};
+ const migration=createRuleImport(db,read,authorization,persist);
+ return {list,catalog,details,plan,create,update,remove,delivery,migration};
 }

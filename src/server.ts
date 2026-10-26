@@ -65,6 +65,8 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
       if(req.method==="POST" && url.pathname==="/api/authorizations") {return json(store.issue((await readJSON(req)).name),201);}
       const revoke=/^\/api\/authorizations\/([^/]+)\/revoke$/.exec(url.pathname);
       if(req.method==="POST" && revoke) {store.revoke(revoke[1]!);return json({ok:true});}
+      const migration=/^\/api\/authorizations\/([0-9a-f-]{36})\/rule-import(?:\/(plan|[0-9a-f-]{36}\/restore))?$/.exec(url.pathname);
+      if(migration&&req.method==='POST'){const auth=migration[1]!,action=migration[2];const body=await readJSON(req);if(action==='plan')return json(store.remoteRules.migration.plan(auth,body));if(action?.endsWith('/restore'))return json(store.remoteRules.migration.restore(auth,action.slice(0,-8),body));return json(store.remoteRules.migration.commit(auth,body));}
       const rules=/^\/api\/authorizations\/([^/]+)\/rules(?:\/([^/]+))?(?:\/(details|plan|enabled))?$/.exec(url.pathname);
       if(rules){const auth=rules[1]!,id=rules[2],action=rules[3];
         if(req.method==="GET"&&!id)return json(store.remoteRules.list(auth));

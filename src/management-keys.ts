@@ -23,6 +23,7 @@ export function createManagementKeys(db:Database,now=Date.now){
 }
 /** Explicit allowlist: bearer keys never reach password/session/key-management APIs or aggregate browser state. */
 export function managementScope(path:string,method:string):ManagementScope|null{
+ if(/^\/api\/authorizations\/[0-9a-f-]{36}\/rule-import(?:\/(?:plan|[0-9a-f-]{36}\/restore))?$/.test(path)&&method==='POST')return 'rules:write';
  if(path==='/api/authorizations')return method==='GET'?'authorizations:read':method==='POST'?'authorizations:create':null;
  if(/^\/api\/authorizations\/[0-9a-f-]{36}\/revoke$/.test(path)&&method==='POST')return 'authorizations:revoke';
  if(/^\/api\/authorizations\/[0-9a-f-]{36}\/rules(?:\/[a-zA-Z0-9_-]+)?(?:\/(?:details|plan|enabled))?$/.test(path)){if(method==='GET')return 'rules:read';if(['POST','PUT','DELETE'].includes(method))return 'rules:write';}

@@ -34,7 +34,7 @@ export function createStore(path: string) {
   const listeners=new Set<(auth:string,revoked:boolean)=>void>();
   function notify(auth:string,revoked=false){for(const listener of listeners)listener(auth,revoked);}
   const rules=createRemoteRules(db);
-  const remoteRules={...rules,create:(...args:Parameters<typeof rules.create>)=>{const result=rules.create(...args);if(result.kind==='created')notify(args[0]);return result;},update:(...args:Parameters<typeof rules.update>)=>{const result=rules.update(...args);notify(args[0]);return result;},remove:(...args:Parameters<typeof rules.remove>)=>{const result=rules.remove(...args);notify(args[0]);return result;}};
+  const remoteRules={...rules,migration:{...rules.migration,commit:(...args:Parameters<typeof rules.migration.commit>)=>{const result=rules.migration.commit(...args);notify(args[0]);return result;},restore:(...args:Parameters<typeof rules.migration.restore>)=>{const result=rules.migration.restore(...args);notify(args[0]);return result;}},create:(...args:Parameters<typeof rules.create>)=>{const result=rules.create(...args);if(result.kind==='created')notify(args[0]);return result;},update:(...args:Parameters<typeof rules.update>)=>{const result=rules.update(...args);notify(args[0]);return result;},remove:(...args:Parameters<typeof rules.remove>)=>{const result=rules.remove(...args);notify(args[0]);return result;}};
   const serverId = (db.query("SELECT id FROM meta").get() as {id:string}).id;
   function issue(name: unknown) {
     const label = text(name,100); const id=randomUUID(); const key=`bsv1_${randomBytes(32).toString("base64url")}`;
