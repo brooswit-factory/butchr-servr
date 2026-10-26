@@ -1,0 +1,30 @@
+import {Heading,Text,Tabs,TabList,Tab,TabPanel} from '@launchpad-ui/components';
+import {Link,useLocation,useNavigate} from 'react-router';
+import {StatusPill} from '../vendor/butchr/dashboard-app/src/components/StatusPill.js';
+import '../vendor/butchr/dashboard-app/src/components/DashboardRows.css';
+import type {OperationalSnapshot} from '../src/telemetry-wire.js';
+export interface Session {id:string;firstSeen:string;lastSeen:string;events?:{sequence:number;occurredAt:string;receivedAt:string;snapshot:OperationalSnapshot}|null}
+export interface Deployment {id:string;firstSeen:string;lastSeen:string;sessions:Session[]}
+export function sessionFreshness(session:Session,now=Date.now()){
+ if(!session.events)return 'No events received';
+ if(now-Date.parse(session.events.receivedAt)>45000||now-Date.parse(session.events.occurredAt)>45000)return 'Stale event data';
+ return session.events.snapshot.transportConnected?'Reporting · last event connected':'Last event disconnected';
+}
+export function DeploymentSessions({authorization}:{authorization:{id:string;deployments:Deployment[]}}){
+ const location=useLocation(),navigate=useNavigate(),base=`/authorizations/${authorization.id}/deployments`;
+ const parts=location.pathname.slice(base.length).split('/').filter(Boolean),deployment=authorization.deployments.find(d=>d.id===parts[0]);
+ if(!parts.length)return <><Heading level={2}>Deployments</Heading>{!authorization.deployments.length&&<p>Waiting for the first deployment…</p>}{authorization.deployments.map(d=><section className="cr-card" key={d.id}><div className="cr-card__body"><Heading level={3}><Link to={`${base}/${d.id}/sessions`}>Deployment <code>{d.id}</code></Link></Heading><p>{d.sessions.length} sessions · Last registration {d.lastSeen}</p><Link to={`${base}/${d.id}/sessions`}>Open Sessions</Link></div></section>)}</>;
+ if(!deployment)return <p>Deployment not found. <Link to={base}>Return to deployments</Link></p>;
+ const sessionId=parts[2],session=sessionId?deployment.sessions.find(s=>s.id===sessionId):deployment.sessions.at(-1),tab=parts[3]==='status'?'status':'agents';
+ const sessionBase=`${base}/${deployment.id}/sessions`;
+ return <><Link to={base}>← Deployments</Link><Heading level={2}>Deployment <code>{deployment.id}</code></Heading><Tabs selectedKey="sessions"><TabList className="servr-tabs" aria-label="Deployment sections"><Tab id="sessions">Sessions</Tab></TabList><TabPanel id="sessions"><div className="servr-sessions"><nav aria-label="Sessions" className="servr-session-list">{!deployment.sessions.length&&<p>No sessions registered.</p>}{[...deployment.sessions].reverse().map(s=><Link key={s.id} to={`${sessionBase}/${s.id}/${tab}`} aria-current={session?.id===s.id?'page':undefined}><strong>Session {s.id.slice(0,8)}</strong><small>{s.firstSeen}</small><small>{sessionFreshness(s)}</small></Link>)}</nav><div className="servr-session-view">{session?<><Heading level={3}>Session <code>{session.id}</code></Heading><p role="status">{sessionFreshness(session)}</p><Tabs selectedKey={tab} onSelectionChange={key=>void navigate(`${sessionBase}/${session.id}/${key}`)}><TabList className="servr-tabs" aria-label="Session views"><Tab id="agents">Agents</Tab><Tab id="status">Status</Tab></TabList><TabPanel id="agents"><SessionAgents session={session}/></TabPanel><TabPanel id="status"><SessionStatus session={session}/></TabPanel></Tabs></>:<p>{sessionId?'Session not found.':'Select a session.'}</p>}</div></div></TabPanel></Tabs></>;
+}
+export function SessionAgents({session}:{session:Session}){
+ const data=session.events?.snapshot;
+ if(!data)return <p>No agent events have been received for this session.</p>;
+ return <><p>Agent observations come from Butchr's existing dashboard feed; this is not a complete fleet census for providers absent from that feed.</p>{!data.agentsChecked&&<p>Agent observation unavailable. Any rows below are last confirmed observations, not a current census.</p>}{data.agentsChecked&&!data.agents.length&&<p>No agents in the latest confirmed observation.</p>}{data.agentsTruncated&&<p>Showing the first100 agents; the source observation was larger.</p>}{data.agents.map(agent=><div className="dashboard-row servr-agent-row" key={agent.id}><Text bold>Agent {agent.id.slice(0,12)}</Text><StatusPill statusClass={agent.status} label={agent.status}/><Text size="small">Confirmed {agent.confirmedAt}{Date.now()-Date.parse(agent.confirmedAt)>45000?' · stale':''}</Text></div>)}</>;
+}
+export function SessionStatus({session}:{session:Session}){
+ const event=session.events;if(!event)return <p>No status events received. Last identity registration: {session.lastSeen}. Registration does not prove agent activity.</p>;
+ const data=event.snapshot;return <dl className="cr-facts"><div><dt>Event sequence</dt><dd>{event.sequence}</dd></div><div><dt>Observed at client</dt><dd>{event.occurredAt}</dd></div><div><dt>Received at server</dt><dd>{event.receivedAt}</dd></div><div><dt>Runtime</dt><dd>{data.mode}</dd></div><div><dt>Controllers</dt><dd>{data.controllersEnabled===null?'Unknown':data.controllersEnabled?'On':'Off'}</dd></div><div><dt>Remote configuration locally</dt><dd>{data.remoteConfigsEnabled?'Allowed':'Master off'}</dd></div><div><dt>Agent census</dt><dd>{data.agentsChecked?'Checked':'Unavailable'}</dd></div><div><dt>Transport at observation</dt><dd>{data.transportConnected?'Connected':'Disconnected'}</dd></div></dl>;
+}

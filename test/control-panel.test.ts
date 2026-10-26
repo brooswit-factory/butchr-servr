@@ -10,7 +10,7 @@ import {serve} from "../src/server.js";
 const key='bsv1_'+'T'.repeat(43), auth=randomUUID();
 function fixture(path:string){const store=createStore(path);const db=new Database(path);db.query('INSERT INTO authorizations VALUES (?,?,?,?,NULL)').run(auth,'Disposable mock',createHash('sha256').update(key).digest('hex'),new Date().toISOString());db.close();return store;}
 function temporary(){return mkdtempSync(join(tmpdir(),'butchr-servr-test-'));}
-test('restart persistence, scoped briefs, reconnect deduplication and revocation',()=>{
+test('restart persistence, global briefs, reconnect deduplication and revocation',()=>{
  const dir=temporary(),path=join(dir,'test.sqlite');let s=fixture(path);try{
  const d=randomUUID(),session=randomUUID();s.saveBrief({authorizationId:auth,name:'Review',text:'# Safe remote instructions'});
  s.remoteRules.create(auth,{id:'persistent-remote',resourceProvider:'jira-work',query:'project = DISPOSABLE',confirm:true});const beforeRules=s.remoteRules.delivery(auth,s.snapshot().serverId);s.connect(auth,d,session);s.connect(auth,d,session);expect(s.snapshot().authorizations[0]!.deployments[0]!.sessions.length).toBe(1);
@@ -20,7 +20,7 @@ test('restart persistence, scoped briefs, reconnect deduplication and revocation
  }finally{s.close();rmSync(dir,{recursive:true,force:true});}
 });
 test('issuance reveals once, hash-only storage and authorization isolation (in-memory)',()=>{
- const s=createStore(':memory:');try{const a=s.issue('A'),b=s.issue('B');expect(s.authenticate(a.key)).toBe(a.id);s.saveBrief({authorizationId:a.id,name:'A only',text:'secret A content'});expect(s.connect(b.id,randomUUID(),randomUUID()).briefs).toEqual([]);const snapshot=JSON.stringify(s.snapshot());expect(snapshot).not.toContain(a.key);expect(snapshot).not.toContain('key_hash');s.revoke(a.id);expect(()=>s.authenticate(a.key)).toThrow();expect(s.authenticate(b.key)).toBe(b.id);}finally{s.close()}
+ const s=createStore(':memory:');try{const a=s.issue('A'),b=s.issue('B');expect(s.authenticate(a.key)).toBe(a.id);s.saveBrief({authorizationId:a.id,name:'Global instructions',text:'Shared instruction content'});expect(s.connect(b.id,randomUUID(),randomUUID()).briefs).toHaveLength(1);const snapshot=JSON.stringify(s.snapshot());expect(snapshot).not.toContain(a.key);expect(snapshot).not.toContain('key_hash');s.revoke(a.id);expect(()=>s.authenticate(a.key)).toThrow();expect(s.authenticate(b.key)).toBe(b.id);}finally{s.close()}
 });
 test('remote brief storage rejects control names and reserved references without changing saved briefs',()=>{
  const s=createStore(':memory:');try{const auth=s.issue('Memory only');s.saveBrief({authorizationId:auth.id,name:'Valid',text:'Existing instructions'});const original=s.snapshot().briefs;

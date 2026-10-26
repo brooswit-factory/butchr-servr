@@ -27,7 +27,7 @@ export function createEventStreams(store:Store,limits={maxEventBytes:MAX_EVENT_B
    controller=c;queues.add(queuedBytes);const group=active.get(auth)??new Set();group.add(close);active.set(auth,group);
    signal.addEventListener('abort',close,{once:true});
    unsubscribe=store.subscribe((changed,revoked)=>{
-    if(changed!==auth||closed)return;
+    if((changed!==auth&&changed!=='*')||closed)return;
     try{
     if(revoked){send('revoked',{});close();return;}
     const next=store.delivery(auth),patch:unknown[]=[];

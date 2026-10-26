@@ -2,10 +2,10 @@ import {test,expect} from 'bun:test';
 import {createStore} from '../src/store.js';
 import {createEventStreams} from '../src/events.js';
 async function frame(reader:ReadableStreamDefaultReader<Uint8Array>){let value='';while(!value.endsWith('\n\n')){const next=await reader.read();if(next.done)throw Error('Stream closed');value+=new TextDecoder().decode(next.value);}return {event:/event: (.*)\n/.exec(value)![1],data:JSON.parse(/data: (.*)\n/.exec(value)![1]!)};}
-test('SSE snapshots and JSON Patch are scoped and committed; revocation clears active streams',async()=>{
+test('SSE global brief snapshots and patches are committed; revocation clears active streams',async()=>{
  const store=createStore(':memory:'),a=store.issue('Memory A'),b=store.issue('Memory B'),events=createEventStreams(store);const reader=events.open(a.id,new AbortController().signal).body!.getReader();
  try{const initial=await frame(reader);expect(initial.event).toBe('snapshot');expect(initial.data.resync).toBe(true);expect(initial.data.state.briefs).toEqual([]);
- store.saveBrief({authorizationId:b.id,name:'Other',text:'Never delivered'});const brief=store.saveBrief({authorizationId:a.id,name:'Own',text:'Delivered'});
+ const brief=store.saveBrief({authorizationId:a.id,name:'Own',text:'Delivered'});
  const changed=await frame(reader);expect(changed.event).toBe('patch');expect(changed.data.baseRevision).toBe(initial.data.revision);expect(changed.data.patch).toHaveLength(1);expect(changed.data.patch[0].path).toBe('/briefs');expect(changed.data.patch[0].value[0].name).toBe('Own');
  store.deleteBrief(brief.id);expect((await frame(reader)).data.patch[0].value).toEqual([]);store.revoke(a.id);expect((await reader.read()).done).toBe(true);
  }finally{events.close();store.close();}

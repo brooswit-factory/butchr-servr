@@ -1,3 +1,4 @@
+import {createTelemetry} from "./telemetry.js";
 import { createRemoteRules } from "./remote-rules.js";
 import { Problem } from "./problems.js";
 export { Problem } from "./problems.js";
@@ -18,8 +19,14 @@ export function createStore(path: string) {
   CREATE TABLE IF NOT EXISTS authorizations (id TEXT PRIMARY KEY,name TEXT NOT NULL,key_hash TEXT NOT NULL UNIQUE,created_at TEXT NOT NULL,revoked_at TEXT);
   CREATE TABLE IF NOT EXISTS deployments (authorization_id TEXT NOT NULL REFERENCES authorizations(id),id TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,PRIMARY KEY(authorization_id,id));
   CREATE TABLE IF NOT EXISTS sessions (authorization_id TEXT NOT NULL,deployment_id TEXT NOT NULL,id TEXT NOT NULL,first_seen TEXT NOT NULL,last_seen TEXT NOT NULL,PRIMARY KEY(authorization_id,deployment_id,id),FOREIGN KEY(authorization_id,deployment_id) REFERENCES deployments(authorization_id,id));
-  CREATE TABLE IF NOT EXISTS briefs (id TEXT PRIMARY KEY,authorization_id TEXT NOT NULL REFERENCES authorizations(id),name TEXT NOT NULL,text TEXT NOT NULL,updated_at TEXT NOT NULL);`);
+  CREATE TABLE IF NOT EXISTS briefs (id TEXT PRIMARY KEY,name TEXT NOT NULL,text TEXT NOT NULL,updated_at TEXT NOT NULL);`);
+  const existingBriefs=db.query("SELECT id,name,text FROM briefs").all();
+  if(existingBriefs.length>1000||Buffer.byteLength(JSON.stringify(existingBriefs))>64_000_000){db.close();throw new Error("Global brief migration requires a library of at most1000 records and64MB. Existing data is unchanged; export/review the library before upgrading.");}
+  if((db.query("PRAGMA table_info(briefs)").all() as {name:string}[]).some(c=>c.name==='authorization_id'))db.transaction(()=>{
+    db.exec("ALTER TABLE briefs RENAME TO briefs_migrating; CREATE TABLE briefs(id TEXT PRIMARY KEY,name TEXT NOT NULL,text TEXT NOT NULL,updated_at TEXT NOT NULL); INSERT INTO briefs SELECT id,name,text,updated_at FROM briefs_migrating; DROP TABLE briefs_migrating;");
+  })();
   if (!db.query("SELECT id FROM meta").get()) db.query("INSERT INTO meta VALUES (?)").run(randomUUID());
+  const telemetry=createTelemetry(db);
   const listeners=new Set<(auth:string,revoked:boolean)=>void>();
   function notify(auth:string,revoked=false){for(const listener of listeners)listener(auth,revoked);}
   const rules=createRemoteRules(db);
@@ -35,8 +42,9 @@ export function createStore(path: string) {
     const auth=db.query("SELECT id FROM authorizations WHERE key_hash=? AND revoked_at IS NULL").get(hash(key)) as {id:string}|null;
     if (!auth) throw new Problem(401,"Invalid or revoked authorization"); return auth.id;
   }
-  function briefs(auth: string) {return db.query("SELECT id,name,text,updated_at AS updatedAt FROM briefs WHERE authorization_id=? ORDER BY updated_at,id").all(auth) as {id:string;name:string;text:string;updatedAt:string}[];}
+  function briefs(_auth: string) {return db.query("SELECT id,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at,id").all() as {id:string;name:string;text:string;updatedAt:string}[];}
   const connect = db.transaction((auth: string, deployment: unknown, session: unknown) => {
+    if(!db.query("SELECT id FROM authorizations WHERE id=? AND revoked_at IS NULL").get(auth))throw new Problem(401,"Invalid or revoked authorization");
     const d=uuid(deployment), s=uuid(session), now=new Date().toISOString();
     const deploymentExists=db.query("SELECT id FROM deployments WHERE authorization_id=? AND id=?").get(auth,d);
     if(!deploymentExists && (db.query("SELECT count(*) AS n FROM deployments WHERE authorization_id=?").get(auth) as {n:number}).n>=1000)throw new Problem(429,"Deployment limit reached");
@@ -48,16 +56,19 @@ export function createStore(path: string) {
   });
   function delivery(auth:string){return {serverId,authorizationId:auth,remoteRules:rules.delivery(auth,serverId),briefs:briefs(auth).map(b=>({...b,id:`remote:${serverId}:${auth}:${b.id}`,builtin:false,source:"remote" as const}))};}
   function registered(auth:string,deployment:unknown,session:unknown){const d=uuid(deployment),s=uuid(session);if(!db.query("SELECT id FROM sessions WHERE authorization_id=? AND deployment_id=? AND id=?").get(auth,d,s))throw new Problem(409,"Register this deployment session first");}
-  function snapshot() { return {serverId,authorizations:(db.query("SELECT id,name,created_at AS createdAt,revoked_at AS revokedAt FROM authorizations ORDER BY created_at").all() as {id:string}[]).map(a=>({...a, deployments:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM deployments WHERE authorization_id=?").all(a.id) as {id:string}[]).map(d=>({...d,sessions:db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM sessions WHERE authorization_id=? AND deployment_id=? ORDER BY first_seen").all(a.id,d.id)}))})),briefs:db.query("SELECT id,authorization_id AS authorizationId,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at").all()}; }
+  function snapshot() { return {serverId,authorizations:(db.query("SELECT id,name,created_at AS createdAt,revoked_at AS revokedAt FROM authorizations ORDER BY created_at").all() as {id:string}[]).map(a=>({...a, deployments:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM deployments WHERE authorization_id=?").all(a.id) as {id:string}[]).map(d=>({...d,sessions:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM sessions WHERE authorization_id=? AND deployment_id=? ORDER BY first_seen").all(a.id,d.id) as {id:string}[]).map(s=>({...s,events:telemetry.session(a.id,d.id,s.id)}))}))})),briefs:db.query("SELECT id,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at").all()}; }
   function revoke(id: string) {if (!db.query("UPDATE authorizations SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(new Date().toISOString(),id).changes) throw new Problem(404,"Active authorization not found");notify(id,true);}
   function saveBrief(input: any, id?: string) {
-    const auth=uuid(input.authorizationId), name=text(input.name,100), content=text(input.text,200000,false);
+    const name=text(input.name,100), content=text(input.text,200000,false);
     if (/[\x00-\x1f\x7f]/.test(name) || content.startsWith("@builtin:")) throw new Problem(400,"Brief must have a single-line name and instructions, not a built-in reference");
-    if (!db.query("SELECT id FROM authorizations WHERE id=? AND revoked_at IS NULL").get(auth)) throw new Problem(400,"Choose an active authorization");
-    if (id) {if (!db.query("UPDATE briefs SET name=?,text=?,updated_at=? WHERE id=? AND authorization_id=?").run(name,content,new Date().toISOString(),uuid(id),auth).changes) throw new Problem(404,"Brief not found");}
-    else {if ((db.query("SELECT count(*) AS n FROM briefs WHERE authorization_id=?").get(auth) as {n:number}).n>=100) throw new Problem(400,"Brief limit reached"); id=randomUUID(); db.query("INSERT INTO briefs VALUES (?,?,?,?,?)").run(id,auth,name,content,new Date().toISOString());} notify(auth);return {id};
+    const briefId=id??randomUUID();
+    const candidate=(db.query("SELECT id,name,text FROM briefs").all() as {id:string}[]).filter(b=>b.id!==id);candidate.push({id:briefId,name,text:content} as any);if(Buffer.byteLength(JSON.stringify(candidate))>64_000_000)throw new Problem(400,"Global brief library is full");
+    if(id){if(!db.query("UPDATE briefs SET name=?,text=?,updated_at=? WHERE id=?").run(name,content,new Date().toISOString(),uuid(id)).changes)throw new Problem(404,"Brief not found");}
+    else{if((db.query("SELECT count(*) AS n FROM briefs").get() as {n:number}).n>=1000)throw new Problem(400,"Brief limit reached");id=briefId;db.query("INSERT INTO briefs VALUES (?,?,?,?)").run(id,name,content,new Date().toISOString());}
+    notify('*');return {id};
   }
-  function deleteBrief(id:string) {const row=db.query("SELECT authorization_id AS auth FROM briefs WHERE id=?").get(uuid(id)) as {auth:string}|null;if(!db.query("DELETE FROM briefs WHERE id=?").run(uuid(id)).changes) throw new Problem(404,"Brief not found");if(row)notify(row.auth);}
-  return {delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
+  function deleteBrief(id:string){if(!db.query("DELETE FROM briefs WHERE id=?").run(uuid(id)).changes)throw new Problem(404,"Brief not found");notify('*');}
+
+  return {telemetry,delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
 }
 export type Store = ReturnType<typeof createStore>;

@@ -3,7 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
 const baseHeaders = {"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","content-security-policy":"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
-export function serve(store: Store, port=7731) {
+export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",import.meta.url)) {
   const streams=createEventStreams(store);
   const rates=new Map<string,{count:number;start:number}>();
   const csrf=randomBytes(32).toString("base64url");
@@ -13,7 +13,7 @@ export function serve(store: Store, port=7731) {
       const url=new URL(req.url); const origin=`http://127.0.0.1:${server.port}`;
       if(req.headers.get("host")!==new URL(origin).host) throw new Problem(403,"Untrusted host");
       const peer=server.requestIP(req); if(!peer || peer.address!=="127.0.0.1") throw new Problem(403,"Loopback required");
-      if(["/v1/connect","/v1/register","/v1/events"].includes(url.pathname)) {
+      if(["/v1/connect","/v1/register","/v1/events","/v1/instance-events"].includes(url.pathname)) {
         if(url.search)throw new Problem(400,"Machine URLs do not accept query parameters");
         const streaming=url.pathname==="/v1/events";
         if(req.method!==(streaming?"GET":"POST"))throw new Problem(405,"Method not allowed");
@@ -22,7 +22,8 @@ export function serve(store: Store, port=7731) {
         const auth=store.authenticate(req.headers.get("authorization")?.replace(/^Bearer /,"")??null);
         const now=Date.now();const rate=rates.get(auth);if(rate&&now-rate.start<60000){if(++rate.count>240)throw new Problem(429,"Try again shortly");}else{rates.set(auth,{count:1,start:now});}
         if(streaming){store.registered(auth,req.headers.get("x-butchr-deployment-id"),req.headers.get("x-butchr-session-id"));return streams.open(auth,req.signal);}
-        const body=await req.json(); const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
+        const body=await req.json();if(url.pathname==="/v1/instance-events")return json(store.telemetry.ingest(auth,body));
+        const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
         return json(url.pathname==="/v1/register"?{serverId:snapshot.serverId,authorizationId:auth,registered:true}:snapshot);
       }
       if(!(await isSameUidPeerAsync(peer,{server:{address:"127.0.0.1",port:server.port!}}))) throw new Problem(403,"Same user required");
@@ -51,15 +52,15 @@ export function serve(store: Store, port=7731) {
       const brief=/^\/api\/briefs\/([^/]+)$/.exec(url.pathname);
       if(req.method==="PUT" && brief) return json(store.saveBrief(await req.json(),brief[1]));
       if(req.method==="DELETE" && brief) {store.deleteBrief(brief[1]!);return json({ok:true});}
-      if(req.method==="GET"&&url.pathname==="/THIRD_PARTY_NOTICES.txt")return new Response(Bun.file(new URL("../web-dist/THIRD_PARTY_NOTICES.txt",import.meta.url)),{headers:baseHeaders});
+      if(req.method==="GET"&&url.pathname==="/THIRD_PARTY_NOTICES.txt")return new Response(Bun.file(new URL("THIRD_PARTY_NOTICES.txt",webRoot)),{headers:baseHeaders});
       if(req.method==="GET"&&url.pathname.startsWith("/assets/")){
         const name=url.pathname.slice(8);if(!/^[a-zA-Z0-9_.-]+$/.test(name))throw new Problem(404,"Asset not found");
-        const file=Bun.file(new URL(`../web-dist/assets/${name}`,import.meta.url));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers:baseHeaders});
+        const file=Bun.file(new URL(`assets/${name}`,webRoot));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers:baseHeaders});
       }
-      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments))?$/.test(url.pathname))){
-        const file=Bun.file(new URL("../web-dist/web/control-panel.html",import.meta.url));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers:baseHeaders});
+      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
+        const file=Bun.file(new URL("web/control-panel.html",webRoot));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers:baseHeaders});
       }
       return json({error:"Not found"},404);
     } catch(e) {return json({error:e instanceof Problem?e.message:"Request failed"},e instanceof Problem?e.status:400);}
-  }}); const stop=server.stop.bind(server);server.stop=((force?:boolean)=>{streams.close();return stop(force);}) as typeof server.stop;return server;
+  }}); const stop=server.stop.bind(server);server.stop=((force?:boolean)=>{const stopping=stop(force);streams.close();return stopping;}) as typeof server.stop;return server;
 }

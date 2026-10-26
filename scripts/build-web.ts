@@ -3,6 +3,7 @@ import {join} from "node:path";
 const root=join(import.meta.dir,"..");
 const build=Bun.spawn([process.execPath,join(root,"node_modules/vite/bin/vite.js"),"build"],{cwd:root,stdout:"inherit",stderr:"inherit"});
 if(await build.exited!==0)process.exit(1);
+if(process.argv.includes("--stage")){console.log("Control panel built in web-dist-next; live entry unchanged.");process.exit(0);}
 const next=join(root,"web-dist-next"),live=join(root,"web-dist");
 mkdirSync(join(live,"web"),{recursive:true});
 // Keep prior hashed assets so already-open tabs keep their lazy chunks.

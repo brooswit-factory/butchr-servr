@@ -36,6 +36,6 @@ test('real HTTP rule routes keep CSRF, authorization scoping and machine-key sep
 test('catalog exposes the exact shared editor capacity roles and supported harness catalog',()=>{
  const s=createStore(':memory:');try{const a=s.issue('Memory');const c=s.remoteRules.catalog(a.id);expect(c.capacityRoles.values).toEqual(['worker','sentinel']);expect(c.catalog.map(v=>v.harness)).toContain('codex');expect(c.briefs.some(b=>b.name==='task')).toBe(true);}finally{s.close()}
 });
-test('rule brief catalog includes only its authorization remote briefs as independent text choices',()=>{
- const s=createStore(':memory:');try{const a=s.issue('Memory A'),b=s.issue('Memory B');s.saveBrief({authorizationId:a.id,name:'Scoped instructions',text:'Current instruction bytes\n'});const choices=s.remoteRules.catalog(a.id).briefs;expect(choices.some(c=>'customId' in c&&c.name==='Scoped instructions')).toBe(true);expect(s.remoteRules.catalog(b.id).briefs.some(c=>c.name==='Scoped instructions')).toBe(false);}finally{s.close()}
+test('rule brief catalogs include the shared global library as independent text choices',()=>{
+ const s=createStore(':memory:');try{const a=s.issue('Memory A'),b=s.issue('Memory B');s.saveBrief({authorizationId:a.id,name:'Scoped instructions',text:'Current instruction bytes\n'});const choices=s.remoteRules.catalog(a.id).briefs;expect(choices.some(c=>'customId' in c&&c.name==='Scoped instructions')).toBe(true);expect(s.remoteRules.catalog(b.id).briefs.some(c=>c.name==='Scoped instructions')).toBe(true);}finally{s.close()}
 });

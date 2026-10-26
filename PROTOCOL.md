@@ -20,3 +20,24 @@ Resource bounds:8 active streams globally,2 per authorization;96MB maximum encod
 - [Official LaunchDarkly JavaScript shared SDK event handlers](https://github.com/launchdarkly/js-sdk-common/blob/main/src/index.js): `put` replaces flags; `patch` updates a flag by key/version; `delete` removes a versioned flag. Those payloads are **not RFC6902**. Butchr borrows the snapshot/update lifecycle, not that wire format.
 - [RFC6902](https://www.rfc-editor.org/rfc/rfc6902): ordered JSON Patch operation arrays and operation failure semantics. Butchr intentionally restricts the operation/path vocabulary and validates the whole candidate before publishing it.
 - [Official EventSource package documentation](https://github.com/EventSource/eventsource): supported Bun runtime and custom fetch for authentication headers.
+
+
+## Global brief library
+
+Brief records are global, authenticated server-owned configuration. Every valid authorization receives the same UUID/name/text library; rules remain scoped. A global mutation fans out to every authorization stream. Client remote reference prefixes retain server+authorization transport provenance for compatibility; the brief UUID itself is unchanged by promotion and is not authorization ownership. Limits:1000 records and64MB JSON of id/name/text, leaving frame headroom for rule data and metadata. The client accepts1000 records. Legacy promotion and save use the same budget; over-limit migration fails before changing records.
+
+## Upstream operational events
+
+`POST /v1/instance-events` uses the existing Bearer key, machine-only guards and JSON body `{deploymentId,sessionId,events:[...]}`. The tuple must already be registered under that authorization. Keys are authorization-level shared secrets, not hardware attestation; a second holder of the same key cannot be distinguished cryptographically. No new persistent credential or device access is created.
+
+Each event is `{id,sequence,occurredAt,type:"session.snapshot",data}`. UUID IDs and contiguous sequences are scoped to server/origin/authorization/deployment/session. Data is an exact allowlist: mode, controllersEnabled (boolean or unknown/null), remoteConfigsEnabled, transportConnected, agentsChecked, agentsTruncated, and at most100 agents with SHA256 opaque id, idle/working/blocked/done/unknown status, confirmedAt. Canonical UTC timestamps are validated; raw arbitrary strings/unknown fields are rejected. Max32KiB/event,16events/batch,1MiB request. Snapshots replace the session projection atomically in sequence; declined observations do not claim a fresh full census.
+
+Batches are transactional. Duplicates acknowledge the durable cursor without reapplying state; conflicting retained sequence/ID reuse and gaps reject the batch. Latest projection/cursor persists through restart and journal retention. The journal stores only IDs/digests, bounded to64/session,1024/authorization,4096global and14days. Historical known-session events remain admissible and are displayed stale using source time; unknown/cross-authorization tuples and revoked keys reject. Received time does not turn old observations into fresh activity.
+
+The client persists admitted snapshots before upload in a private64-record/2MB outbox with at most10000 source-scoped cursors, retries with jittered exponential backoff capped30seconds, and removes records only after acknowledgement. Capacity pauses admission explicitly rather than silently evicting events. Old-source records are not sent under a new authorization; returning to the earlier source retains its sequence cursor. A lifetime SQLite exclusive writer lock prevents concurrent clients from overwriting one runtime's state and is kernel-released on crash. JSON installs fsync/rename/directory-sync; post-rename memory retains installed cursors even on sync failure. Stop cancels HTTP work and ignores late acknowledgements.
+
+## Local overrides and shutdown
+
+The local master switch gates every remote configuration consumer; remote briefs disappear from the effective library while off, and rule DTOs explicitly distinguish master-off, local override and server-disabled. Per-rule intent is a persistent tombstone keyed by the immutable remote reference. Deletion/reappearance and patches retain it. Transport/event reporting may continue; local/custom data is untouched. Rules are staged-only in the Codey management host, so no live worker lifecycle is triggered.
+
+On shutdown the server starts native Bun stop before closing owned SSE streams. This ordering avoids a reproduced Bun two-EventSource finalization hang; no force-exit or network security change is used.
