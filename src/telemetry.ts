@@ -17,7 +17,7 @@ export function createTelemetry(db:Database){
   // Delayed snapshots for known historical sessions remain admissible; UI uses occurredAt for staleness.
   let cursor=(db.query('SELECT sequence FROM event_cursors WHERE authorization_id=? AND deployment_id=? AND session_id=?').get(auth,d,s) as {sequence:number}|null)?.sequence??0;
   const now=new Date().toISOString();
-  for(const value of body.events){let event;try{event=validateEvent(value);}catch{throw new Problem(400,'Invalid event payload');}const digest=createHash('sha256').update(canonical(event)).digest('hex');
+  for(const value of body.events){let event;try{event=validateEvent(value);for(const agent of event.data.agents){const origin=agent.provenance?.admittedRule;if(origin?.source==='remote'&&(origin.authorizationId!==auth||origin.serverId!==(db.query('SELECT id FROM meta').get() as {id:string}).id))throw Error('Mismatched rule origin');}}catch{throw new Problem(400,'Invalid event payload');}const digest=createHash('sha256').update(canonical(event)).digest('hex');
    if(event.sequence<=cursor){const previous=db.query('SELECT event_id,digest FROM instance_events WHERE authorization_id=? AND deployment_id=? AND session_id=? AND sequence=?').get(auth,d,s,event.sequence) as {event_id:string;digest:string}|null;if(previous&&(previous.event_id!==event.id||previous.digest!==digest))throw new Problem(409,'Sequence already belongs to another event');continue;}
    if(event.sequence!==cursor+1)throw new Problem(409,'Event sequence gap');
    if(db.query('SELECT event_id FROM instance_events WHERE authorization_id=? AND event_id=?').get(auth,event.id))throw new Problem(409,'Event identity reused');
@@ -31,6 +31,9 @@ export function createTelemetry(db:Database){
   db.query('DELETE FROM instance_events WHERE received_at<?').run(new Date(Date.now()-14*86400000).toISOString());
   return {acknowledgedSequence:cursor,receivedAt:now};
  });
- function session(auth:string,deployment:string,id:string){const row=db.query('SELECT sequence,occurred_at AS occurredAt,received_at AS receivedAt,projection FROM event_cursors WHERE authorization_id=? AND deployment_id=? AND session_id=?').get(auth,deployment,id) as {sequence:number;occurredAt:string;receivedAt:string;projection:string}|null;return row?{sequence:row.sequence,occurredAt:row.occurredAt,receivedAt:row.receivedAt,snapshot:JSON.parse(row.projection)}:null;}
+ function session(auth:string,deployment:string,id:string){const row=db.query('SELECT sequence,occurred_at AS occurredAt,received_at AS receivedAt,projection FROM event_cursors WHERE authorization_id=? AND deployment_id=? AND session_id=?').get(auth,deployment,id) as {sequence:number;occurredAt:string;receivedAt:string;projection:string}|null;if(!row)return null;const snapshot=JSON.parse(row.projection),ruleLinks:Record<string,string>={};
+  const doc=db.query('SELECT document FROM remote_rule_sets WHERE authorization_id=?').get(auth) as {document:string}|null;const rules=doc?JSON.parse(doc.document).rules:[];
+  for(const agent of snapshot.agents){const p=agent.provenance,a=p?.admittedRule;if(a?.source==='remote'&&a.authorizationId===auth&&a.serverId===(db.query('SELECT id FROM meta').get() as {id:string}).id&&rules.some((r:any)=>r.id===a.id&&r.resourceProvider===p.provider))ruleLinks[agent.id]=`/authorizations/${encodeURIComponent(auth)}/rules#rule-${encodeURIComponent(p.provider)}--${encodeURIComponent(a.id)}`;}
+  return {sequence:row.sequence,occurredAt:row.occurredAt,receivedAt:row.receivedAt,snapshot,ruleLinks};}
  return {ingest,session};
 }
