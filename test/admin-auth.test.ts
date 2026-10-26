@@ -31,3 +31,8 @@ test('password and hashed sessions survive a real disposable database close/reop
  try{const pre=store.adminAuth.status(new Request('http://fixture/'));const request=new Request('http://fixture/',{method:'POST',headers:{cookie:pre.cookie!.split(';')[0]!,'x-butchr-servr-csrf':pre.body.csrf}});const issued=await store.adminAuth.login(request,{password:fixturePassword},true);const cookie=issued.cookie.split(';')[0]!;store.close();store=createStore(root+'/fixture.sqlite');expect(store.adminAuth.status(new Request('http://fixture/',{headers:{cookie}})).body.authenticated).toBe(true);expect(store.adminAuth.status(new Request('http://fixture/')).body.configured).toBe(true);
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
+test('password boundary rejects seven characters and accepts eight without complexity requirements',async()=>{
+ const db=new Database(':memory:'),auth=createAdminAuth(db);
+ const setup=async(password:string)=>{const status=auth.status(new Request('http://fixture/'));return auth.login(new Request('http://fixture/',{method:'POST',headers:{cookie:status.cookie!.split(';')[0]!,'x-butchr-servr-csrf':status.body.csrf}}),{password},true);};
+ try{await expect(setup('aaaaaaa')).rejects.toThrow('at least 8 characters');expect(auth.status(new Request('http://fixture/')).body.configured).toBe(false);expect((await setup('aaaaaaaa')).body.authenticated).toBe(true);}finally{db.close();}
+});

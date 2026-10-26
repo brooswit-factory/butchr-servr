@@ -20,3 +20,9 @@ test('expiry hides but preserves drafts; login restores them and clears password
  authenticated=false;await act(async()=>window.dispatchEvent(new Event('butchr-login-required')));await waitFor(()=>expect(view.getByRole('heading',{name:'Log in'})).toBeTruthy());expect(draft.closest('[hidden]')).toBeTruthy();
  fireEvent.change(view.getByLabelText('Password'),{target:{value:'Disposable fixture password'}});await act(async()=>fireEvent.submit(view.getByRole('button',{name:'Log in'}).closest('form')!));await waitFor(()=>expect(view.queryByRole('heading',{name:'Log in'})).toBeNull());expect((draft as HTMLInputElement).value).toBe('unsaved fixture draft');expect(draft.closest('[hidden]')).toBeNull();
 });
+test('setup fields and guidance consistently use an eight-character minimum',async()=>{
+ globalThis.fetch=(async()=>Response.json({configured:false,authenticated:false,csrf:'fixture-preauth-csrf'})) as typeof fetch;
+ const view=render(<AuthGate>{()=>null}</AuthGate>);await waitFor(()=>expect(view.getByRole('heading',{name:'Set your admin password'})).toBeTruthy());
+ for(const label of ['Password','Confirm password'])expect((view.getByLabelText(label) as HTMLInputElement).minLength).toBe(8);
+ expect(view.getByText(/At least 8 characters/)).toBeTruthy();
+});
