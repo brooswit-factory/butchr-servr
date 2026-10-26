@@ -9,7 +9,7 @@ try:
  os.environ.setdefault('DBUS_SESSION_BUS_ADDRESS',f'unix:path=/run/user/{os.getuid()}/bus')
  collection=secretstorage.get_default_collection(secretstorage.dbus_init())
  if collection.is_locked():raise RuntimeError('locked')
- items=collection.search_items({'application':'butchr-servr','purpose':'management-api','key-id':args.key_id})
+ items=list(collection.search_items({'application':'butchr-servr','purpose':'management-api','key-id':args.key_id}))
  if len(items)!=1:raise RuntimeError('item count')
  key=items[0].get_secret().decode()
  with sqlite3.connect('file:'+str(pathlib.Path(__file__).resolve().parent.parent/'runtime/control.sqlite')+'?mode=ro',uri=True) as db:
