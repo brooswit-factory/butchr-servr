@@ -33,3 +33,8 @@ test('freshness receipt waits for a new read begun after the request and fences 
  const id=polls.view('a','d','s').results[0]!.id;const receipt=polls.set('a','d','s',{...input,refresh:[id]});expect(receipt.minimumVersions?.[id]).toBe(1);expect(work).toHaveLength(2);
  const next=polls.set('a','d','s',{...input,refresh:[id]});expect(work[1]!.signal.aborted).toBe(true);work[1]!.finish({id:'200',body:'stale pre-request'});await polls.idle();await polls.tick();expect(work).toHaveLength(3);expect(polls.view('a','d','s').results[0]!.result).toEqual({ok:true,value:{id:'200',body:'v0'}});work[2]!.finish({id:'200',body:'fresh post-request'});await polls.idle();expect(polls.view('a','d','s').results[0]!.version).toBe(next.minimumVersions![id]!);expect(polls.view('a','d','s').results[0]!.result).toEqual({ok:true,value:{id:'200',body:'fresh post-request'}});await polls.stop();
 });
+
+test('profile view snapshots the optional tenant origin once per response',()=>{
+ let calls=0;const polls=createProviderPolls({scope,enabled:()=>false,execute:async()=>null,changed:()=>{},atlassianOrigin:()=>++calls===1?'https://fixture.atlassian.net':undefined});
+ expect(polls.view('a','d','s').atlassianOrigin).toBe('https://fixture.atlassian.net');expect(calls).toBe(1);void polls.stop();
+});
