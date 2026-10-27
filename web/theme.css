@@ -12,4 +12,4 @@
 /* Preserve the shared shell's horizontal navigation on narrow screens. */
 .servr-shell .bt-topbar>*{flex-shrink:0}.servr-shell .bt-nav{flex-basis:auto;min-width:max-content}
 
-.servr-authorization>h1{min-height:0}.servr-authorization .servr-tabs[aria-label="Authorization sections"]{margin:0}.servr-authorization .servr-deployment-panel{margin-top:0;padding-top:0}.servr-authorization .servr-tabs[aria-label="Deployment sections"]{margin-top:0}
+.servr-authorization>h1{height:auto;min-height:0}.servr-authorization .servr-tabs[aria-label="Authorization sections"]{margin:0}.servr-authorization .servr-deployment-panel{margin-top:0;padding-top:0}.servr-authorization .servr-tabs[aria-label="Deployment sections"]{margin-top:0}
