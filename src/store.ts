@@ -1,3 +1,6 @@
+import {createProviderConnections} from "./provider-connections.js";
+import {createProviderPolls} from "./provider-polls.js";
+import {dirname,join} from "node:path";
 import {createManagementKeys} from "./management-keys.js";
 import {createAdminAuth} from "./admin-auth.js";
 import {createTelemetry} from "./telemetry.js";
@@ -7,11 +10,10 @@ export { Problem } from "./problems.js";
 import { Database } from "bun:sqlite";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { chmodSync, mkdirSync, existsSync, lstatSync } from "node:fs";
-import { dirname } from "node:path";
 const hash = (key: string) => createHash("sha256").update(key).digest("hex");
 export function text(value: unknown, max: number, trim = true) { if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0")) throw new Problem(400, "Invalid text field"); return trim ? value.trim() : value; }
 export function uuid(value: unknown) { if (typeof value !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) throw new Problem(400, "Expected UUID v4"); return value; }
-export function createStore(path: string) {
+export function createStore(path: string,fixtures:{providerExecute?:Parameters<typeof createProviderPolls>[0]['execute']}={}) {
   if (path !== ":memory:") mkdirSync(dirname(path), {recursive: true, mode: 0o700});
   if(path!==":memory:" && existsSync(path) && (!lstatSync(path).isFile() || lstatSync(path).isSymbolicLink())) throw new Error("Unsafe database path");
   const db = new Database(path, {create: true});
@@ -32,10 +34,12 @@ export function createStore(path: string) {
   const managementKeys=createManagementKeys(db);
   const telemetry=createTelemetry(db);
   const listeners=new Set<(auth:string,revoked:boolean)=>void>();
-  function notify(auth:string,revoked=false){for(const listener of listeners)listener(auth,revoked);}
+  function notify(auth:string,revoked=false){providerPolls?.revalidate(auth);for(const listener of listeners)listener(auth,revoked);}
   const rules=createRemoteRules(db);
   const remoteRules={...rules,migration:{...rules.migration,commit:(...args:Parameters<typeof rules.migration.commit>)=>{const result=rules.migration.commit(...args);notify(args[0]);return result;},restore:(...args:Parameters<typeof rules.migration.restore>)=>{const result=rules.migration.restore(...args);notify(args[0]);return result;}},create:(...args:Parameters<typeof rules.create>)=>{const result=rules.create(...args);if(result.kind==='created')notify(args[0]);return result;},update:(...args:Parameters<typeof rules.update>)=>{const result=rules.update(...args);notify(args[0]);return result;},remove:(...args:Parameters<typeof rules.remove>)=>{const result=rules.remove(...args);notify(args[0]);return result;}};
   const serverId = (db.query("SELECT id FROM meta").get() as {id:string}).id;
+  const providerConnections=createProviderConnections(db,path===':memory:'?null:join(dirname(path),'provider-secrets'),auth=>notify(auth));
+  const providerPolls=createProviderPolls({scope:(auth,deployment,session)=>{registered(auth,deployment,session);if((db.query('SELECT revoked_at FROM authorizations WHERE id=?').get(auth) as {revoked_at:string|null}).revoked_at)throw new Problem(401,'Authorization revoked');return {serverId,authorizationId:auth,deploymentId:deployment,sessionId:session,ruleRevision:rules.delivery(auth,serverId).revision,credentialEpoch:providerConnections.epoch(auth)};},execute:fixtures.providerExecute??providerConnections.execute,available:fixtures.providerExecute?()=>true:providerConnections.available,enabled:providerConnections.enabled,atlassianOrigin:providerConnections.atlassianOrigin,changed:auth=>notify(auth)});
   function issue(name: unknown) {
     const label = text(name,100); const id=randomUUID(); const key=`bsv1_${randomBytes(32).toString("base64url")}`;
     db.query("INSERT INTO authorizations VALUES (?,?,?,?,NULL)").run(id,label,hash(key),new Date().toISOString());
@@ -58,10 +62,10 @@ export function createStore(path: string) {
     db.query("INSERT INTO sessions VALUES (?,?,?,?,?) ON CONFLICT(authorization_id,deployment_id,id) DO UPDATE SET last_seen=excluded.last_seen").run(auth,d,s,now,now);
     return delivery(auth);
   });
-  function delivery(auth:string){return {serverId,authorizationId:auth,remoteRules:rules.delivery(auth,serverId),briefs:briefs(auth).map(b=>({...b,id:`remote:${serverId}:${auth}:${b.id}`,builtin:false,source:"remote" as const}))};}
+  function delivery(auth:string,instance?:{deploymentId:string;sessionId:string;providers:true}){return {serverId,authorizationId:auth,remoteRules:rules.delivery(auth,serverId),briefs:briefs(auth).map(b=>({...b,id:`remote:${serverId}:${auth}:${b.id}`,builtin:false,source:"remote" as const})),...(instance?{providerReads:providerPolls.view(auth,instance.deploymentId,instance.sessionId)}:{})};}
   function registered(auth:string,deployment:unknown,session:unknown){const d=uuid(deployment),s=uuid(session);if(!db.query("SELECT id FROM sessions WHERE authorization_id=? AND deployment_id=? AND id=?").get(auth,d,s))throw new Problem(409,"Register this deployment session first");}
   function snapshot() { return {serverId,authorizations:(db.query("SELECT id,name,created_at AS createdAt,revoked_at AS revokedAt FROM authorizations ORDER BY created_at").all() as {id:string}[]).map(a=>({...a, deployments:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM deployments WHERE authorization_id=?").all(a.id) as {id:string}[]).map(d=>({...d,sessions:(db.query("SELECT id,first_seen AS firstSeen,last_seen AS lastSeen FROM sessions WHERE authorization_id=? AND deployment_id=? ORDER BY first_seen").all(a.id,d.id) as {id:string}[]).map(s=>({...s,events:telemetry.session(a.id,d.id,s.id)}))}))})),briefs:db.query("SELECT id,name,text,updated_at AS updatedAt FROM briefs ORDER BY updated_at").all()}; }
-  function revoke(id: string) {if (!db.query("UPDATE authorizations SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(new Date().toISOString(),id).changes) throw new Problem(404,"Active authorization not found");notify(id,true);}
+  function revoke(id: string) {if (!db.query("UPDATE authorizations SET revoked_at=? WHERE id=? AND revoked_at IS NULL").run(new Date().toISOString(),id).changes) throw new Problem(404,"Active authorization not found");void providerConnections.cancel(id);notify(id,true);}
   function saveBrief(input: any, id?: string) {
     const name=text(input.name,100), content=text(input.text,200000,false);
     if (/[\x00-\x1f\x7f]/.test(name) || content.startsWith("@builtin:")) throw new Problem(400,"Brief must have a single-line name and instructions, not a built-in reference");
@@ -73,6 +77,6 @@ export function createStore(path: string) {
   }
   function deleteBrief(id:string){if(!db.query("DELETE FROM briefs WHERE id=?").run(uuid(id)).changes)throw new Problem(404,"Brief not found");notify('*');}
 
-  return {managementKeys,adminAuth,telemetry,delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>db.close()};
+  return {providerConnections,providerPolls,managementKeys,adminAuth,telemetry,delivery,registered,subscribe:(listener:(auth:string,revoked:boolean)=>void)=>{listeners.add(listener);return ()=>{listeners.delete(listener);};},remoteRules,issue,authenticate,connect,snapshot,revoke,saveBrief,deleteBrief,close:()=>{const stopping=Promise.all([providerPolls.stop(),providerConnections.stop()]);db.close();return stopping;}};
 }
 export type Store = ReturnType<typeof createStore>;

@@ -7,11 +7,11 @@ export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQ
  const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
  const active=new Map<string,Set<()=>void>>();
  const encode=new TextEncoder();
- function open(auth:string,signal:AbortSignal){
+ function open(auth:string,signal:AbortSignal,instance?:{deploymentId:string;sessionId:string;providers:true}){
   const count=[...active.values()].reduce((n,s)=>n+s.size,0);
   if(count>=(limits.maxStreams??8)||(active.get(auth)?.size??0)>=(limits.maxPerAuthorization??2))throw new Problem(429,"Stream limit reached");
-  const epoch=randomUUID();let sequence=0,revision=`${epoch}:0`,initial:ReturnType<Store["delivery"]>|null=store.delivery(auth),closed=false;
-  let hashes={briefs:digest(initial.briefs),remoteRules:digest(initial.remoteRules)};
+  const epoch=randomUUID();let sequence=0,revision=`${epoch}:0`,initial:ReturnType<Store["delivery"]>|null=store.delivery(auth,instance),closed=false;
+  let hashes={briefs:digest(initial.briefs),remoteRules:digest(initial.remoteRules),providerReads:digest(initial.providerReads??null)};
   let controller:ReadableStreamDefaultController<Uint8Array>,unsubscribe=()=>{},timer:ReturnType<typeof setInterval>;
   const frames:Uint8Array[]=[];let pendingBytes=0,offset=0,waiting=false;const queuedBytes=()=>pendingBytes;
   function pump(){if(closed||!waiting||!frames.length)return;const frame=frames[0]!,end=Math.min(frame.byteLength,offset+65536),chunk=frame.slice(offset,end);offset=end;if(offset===frame.byteLength){pendingBytes-=frame.byteLength;frames.shift();offset=0;}waiting=false;controller.enqueue(chunk);}
@@ -30,9 +30,9 @@ export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQ
     if((changed!==auth&&changed!=='*')||closed)return;
     try{
     if(revoked){send('revoked',{});close();return;}
-    const next=store.delivery(auth),patch:unknown[]=[];
-    const nextHashes={briefs:digest(next.briefs),remoteRules:digest(next.remoteRules)};
-    for(const path of ['briefs','remoteRules'] as const)if(hashes[path]!==nextHashes[path])patch.push({op:'replace',path:`/${path}`,value:next[path]});
+    const next=store.delivery(auth,instance),patch:unknown[]=[];
+    const nextHashes={briefs:digest(next.briefs),remoteRules:digest(next.remoteRules),providerReads:digest(next.providerReads??null)};
+    for(const path of (instance?['briefs','remoteRules','providerReads']:['briefs','remoteRules']) as ('briefs'|'remoteRules'|'providerReads')[])if(hashes[path]!==nextHashes[path])patch.push({op:'replace',path:`/${path}`,value:next[path]});
     if(!patch.length)return;
     const baseRevision=revision;revision=`${epoch}:${++sequence}`;hashes=nextHashes;
     send('patch',{baseRevision,revision,patch},revision);

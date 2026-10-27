@@ -1,0 +1,33 @@
+{
+  "sourceProject": "Butchr",
+  "license": "MIT",
+  "purpose": "Existing provider read methods only; no daemon startup or worker code",
+  "inputs": {
+    "src/atlassian/client.ts": "4a5925aa106eee81e5fa0c75821dc2b7052e2f0c013c7841078bccf49e2d2a85",
+    "src/jira-watch/external-poll.ts": "5ca84378081173ef82eb1403c89e03d798a336889e9282ed5b182a7183a0ce4d",
+    "src/jira-watch/poll-linked-item.ts": "7b4514ee60459d2d9e97865ca7ec65568623dc07ecf4bca5498c4f57e26e3640",
+    "src/labels/pr.ts": "c5ca3d08270c76500b24e96deb1f352fb76e8a01b16ba04d5626ba5b7029df70",
+    "src/providers/pinned-webpage.ts": "d5cce434c66ae0c78a3016256d159a49ec9c51d19dadebbe749e8ec222ab6acf",
+    "src/providers/read-protocol.ts": "79e2f3b5b6f75836b25cdbb031b9ed9b36c64ec55613ec9675fb130a13bdf866",
+    "src/providers/readers.ts": "f8297ad03237822b4b219cd294bd2ba920b489e0299898e4fb52bd667bd3f4e4",
+    "src/resources/confluence-url.ts": "b1a24ab8ca87eaa2fe1682918012cb99f57ebfbf69045038979726ce22bc21c5",
+    "src/resources/github-issue-ref.ts": "d09c2f97df6e1ab2c7a846c9d8e0bd86405aafc8f0eb6078d4b0f56b5afd30d9",
+    "src/resources/github-issue.ts": "535db947adec2eb706ceabd03eda9b4ce4639996a2585dbcf1a9e8b52d27a662",
+    "src/resources/github-pr-ref.ts": "c7697eff9f482ede25fe4217165be308ba7ad8bba3723eea18c6dc1cd3a86fc6",
+    "src/resources/github-pr.ts": "e53fb0600557c3c8a07c4942817755d6d5e5b1bdbf7da9e29d08f445f3145827",
+    "src/resources/id.ts": "566e06b8b259918cb1a7410d2e4f20afb4e36361bd8211a508c8ca0c8a4e4774",
+    "src/resources/jira-key.ts": "92ddaa69ab929dcfe2219b5bc1d55b9bfd6b898e5a5d36e9f3a2de78551f7394",
+    "src/resources/jira-project.ts": "5d331a3f841d7645abb3e4e47802f5d0b7391f95979c748acecb515c741f1f6a",
+    "src/resources/linked-discovery.ts": "94e19231fb1fd2560ace2bd7e84ef08bcb26e392b13422a5c696d3d83eddca61",
+    "src/resources/trello-card-ref.ts": "1e7185bd38c1f7986a086cc7a10f46cb862d4b14dc28a1e3cab2001be3073f02",
+    "src/resources/trello-card.ts": "4738441393b9c740da69afa0b5c435a54a9f0c5156e0989a9668fa050d8a6fb9",
+    "src/resources/zendesk-ticket-ref.ts": "e597de381d287a53121ed00717c768d66eca2aafb5b219cca0ba42bf597b6f7b",
+    "src/resources/zendesk-ticket.ts": "b3d2990277f3d49568ab09c555d267c32bee4e18e50807c45a94b104585d4459",
+    "src/setup/github-token-write.ts": "a5449c42f667ea238553de432ab8cbf7b272536341ffb9841b8d6718c21f352c",
+    "src/setup/provider-secrets.ts": "d2b9af3b2e243cf90d35c96b33d21f60c6e89c69f2fb1f400322c700de72a0a5",
+    "src/tools/atlassian-real.ts": "a3d82a132bbe5b376d6bd82315b1a52b34198599029767517ce0aee6cef06790",
+    "src/web/github-connection-test.ts": "98b6cd2b75b715ec31b7f4f8a69206c644b0ebfdee7637ed96c1932d0b42b27d",
+    "src/web/jira-connection-test.ts": "be1a23ff8b7b4fb51daa369856d1d85831bf6610219918a53c43853bd5b5275a"
+  },
+  "bundleSHA256": "faf9b1b49d45ca9f4d5d925bb4fa97c354e045e0a53c10cd8d7b5ace9cfb3472"
+}

@@ -1,0 +1,4 @@
+import {expect,test} from 'bun:test';
+import {readProviderProcessInput} from '../src/provider-process-input.js';
+test('byte-by-byte pipe chunks preserve multibyte query/resource characters exactly',async()=>{const expected={query:'project = メタ AND summary ~ "🙂 café"',resource:'リソース'};const bytes=new TextEncoder().encode(JSON.stringify(expected));async function* chunks(){for(const byte of bytes)yield new Uint8Array([byte]);}expect(await readProviderProcessInput(chunks())).toEqual(expected);});
+test('oversized and malformed UTF8 pipe input is rejected before parsing or provider calls',async()=>{async function* large(){yield new Uint8Array(100);}await expect(readProviderProcessInput(large(),10)).rejects.toThrow('bound');async function* malformed(){yield new Uint8Array([0xff]);}await expect(readProviderProcessInput(malformed())).rejects.toThrow();});

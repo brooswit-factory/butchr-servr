@@ -11,6 +11,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
   let requests=0;
   const streams=createEventStreams(store,production?{maxEventBytes:96_000_000,maxQueuedBytes:96_000_000,maxStreams:4,maxPerAuthorization:2}:undefined);
   const rate=requestRates();
+  const providerTimer=setInterval(()=>void store.providerPolls.tick(),1000);providerTimer.unref();
   const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{...headers,...(status===429?{"retry-after":"60"}:{})}});
   const server=Bun.serve({hostname:"127.0.0.1",port,idleTimeout:60,maxRequestBodySize:1024*1024,error(){return new Response(null,{status:500,headers});},async fetch(req,server) {
     if(requests>=16)return json({error:"Server busy"},503);
@@ -20,7 +21,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
       checkProxy(req,origin,production);
       const peer=server.requestIP(req); if(!peer || peer.address!=="127.0.0.1") throw new Problem(403,"Loopback required");
       if(!(await isSameUidPeerAsync(peer,{server:{address:"127.0.0.1",port:server.port!}}))) throw new Problem(403,"Same user required");
-      if(["/v1/connect","/v1/register","/v1/events","/v1/instance-events"].includes(url.pathname)) {
+      if(["/v1/connect","/v1/register","/v1/events","/v1/instance-events","/v1/provider-reads"].includes(url.pathname)) {
         if(url.search)throw new Problem(400,"Machine URLs do not accept query parameters");
         const streaming=url.pathname==="/v1/events";
         if(req.method!==(streaming?"GET":"POST"))throw new Problem(405,"Method not allowed");
@@ -28,8 +29,8 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         if(!streaming&&!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
         const auth=store.authenticate(req.headers.get("authorization")?.replace(/^Bearer /,"")??null);
         rate(auth,240);
-        if(streaming){store.registered(auth,req.headers.get("x-butchr-deployment-id"),req.headers.get("x-butchr-session-id"));const response=streams.open(auth,req.signal);if(production)response.headers.set("strict-transport-security","max-age=31536000");return response;}
-        const body=await readJSON(req);if(url.pathname==="/v1/instance-events")return json(store.telemetry.ingest(auth,body));
+        if(streaming){store.registered(auth,req.headers.get("x-butchr-deployment-id"),req.headers.get("x-butchr-session-id"));const providerProtocol=req.headers.get('x-butchr-provider-protocol');if(providerProtocol&&providerProtocol!=='1')throw new Problem(400,'Unsupported provider protocol');const response=streams.open(auth,req.signal,providerProtocol==='1'?{deploymentId:req.headers.get('x-butchr-deployment-id')!,sessionId:req.headers.get('x-butchr-session-id')!,providers:true}:undefined);if(production)response.headers.set("strict-transport-security","max-age=31536000");return response;}
+        const body=await readJSON(req);if(url.pathname==='/v1/provider-reads'){store.registered(auth,body.deploymentId,body.sessionId);return json(store.providerPolls.set(auth,body.deploymentId,body.sessionId,body.subscription));}if(url.pathname==="/v1/instance-events"){const result=store.telemetry.ingest(auth,body);store.providerPolls.touch(auth,body.deploymentId,body.sessionId);return json(result);}
         const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
         return json(url.pathname==="/v1/register"?{serverId:snapshot.serverId,authorizationId:auth,registered:true}:snapshot);
       }
@@ -53,6 +54,8 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
       if(req.method==='POST'&&url.pathname==='/api/auth/logout')return authResponse(store.adminAuth.logout(req));
       let csrf='';
       if(url.pathname.startsWith('/api/')&&!bearer){const active=store.adminAuth.requireSession(req);csrf=active.csrf;if(!['GET','HEAD'].includes(req.method))store.adminAuth.csrf(req,csrf);}
+      const providers=/^\/api\/providers\/([0-9a-f-]{36})(?:\/(atlassian|github|zendesk|trello)(?:\/(test))?)?$/.exec(url.pathname);
+      if(providers){if(bearer)throw new Problem(403,'Owner session required');const [,authorization,family,action]=providers;if(req.method==='GET'&&!family)return json(store.providerConnections.list(authorization!));if(req.method==='PUT'&&family&&!action)return json(store.providerConnections.save(authorization!,family,await readJSON(req,16000)));if(req.method==='POST'&&family&&action==='test'){rate('provider-test:'+authorization+':'+family,12);return json(await store.providerConnections.test(authorization!,family,req.signal));}}
       if(req.method==='GET'&&url.pathname==='/api/management-keys')return json({keys:store.managementKeys.list()});
       if(req.method==='POST'&&url.pathname==='/api/management-keys')return json(store.managementKeys.issue(await readJSON(req)),201);
       const managementRevoke=/^\/api\/management-keys\/([0-9a-f-]{36})\/revoke$/.exec(url.pathname);
@@ -86,10 +89,10 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         const name=url.pathname.slice(8);if(!/^[a-zA-Z0-9_.-]+$/.test(name))throw new Problem(404,"Asset not found");
         const file=Bun.file(new URL(`assets/${name}`,webRoot));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers});
       }
-      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/management-keys"||url.pathname==="/authorizations"||url.pathname==="/briefs"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
+      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/management-keys"||url.pathname==="/authorizations"||url.pathname==="/briefs"||url.pathname==="/providers"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
         const file=Bun.file(new URL("web/control-panel.html",webRoot));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers});
       }
       return json({error:"Not found"},404);
     } catch(e) {return json({error:e instanceof Problem?e.message:"Request failed"},e instanceof Problem?e.status:400);}finally{requests--;}
-  }}); const stop=server.stop.bind(server);server.stop=((force?:boolean)=>{const stopping=stop(force);streams.close();return stopping;}) as typeof server.stop;return server;
+  }}); const stop=server.stop.bind(server);server.stop=(async(force?:boolean)=>{const stopping=stop(force);streams.close();clearInterval(providerTimer);await Promise.all([store.providerPolls.stop(),store.providerConnections.stop()]);await stopping;}) as typeof server.stop;return server;
 }
