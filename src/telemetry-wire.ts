@@ -21,3 +21,6 @@ export function validateEvent(value:any):InstanceEvent{
  const seen=new Set<string>();for(const a of d.agents){if(!exact(a,Object.hasOwn(a??{},'provenance')?['id','status','confirmedAt','provenance']:['id','status','confirmedAt'])||(Object.hasOwn(a??{},'provenance')&&!validAgentProvenance(a.provenance))||typeof a.id!=='string'||!/^[0-9a-f]{64}$/.test(a.id)||seen.has(a.id)||!['idle','working','blocked','done','unknown'].includes(a.status))throw new Error('Invalid agent metadata');time(a.confirmedAt);seen.add(a.id);}
  if(Buffer.byteLength(JSON.stringify(value))>32768)throw new Error('Event too large');return value;
 }
+
+/** Server-derived observation time; absent until a status transition is observed. */
+export type ObservedSnapshot=Omit<OperationalSnapshot,'agents'>&{agents:(OperationalSnapshot['agents'][number]&{statusChangedAt?:string})[]};

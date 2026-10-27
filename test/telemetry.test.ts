@@ -34,3 +34,17 @@ test('legacy aggregate101 promotes intact; over-capacity migration refuses witho
  try{if(count===101){const s=createStore(path);try{expect(s.snapshot().briefs).toHaveLength(101);expect(s.remoteRules.catalog(a).briefs.filter(v=>'customId' in v).every(v=>v.name.includes('('))).toBe(true);}finally{s.close();}}else{expect(()=>createStore(path)).toThrow('unchanged');const check=new Database(path);expect(check.query('SELECT * FROM briefs ORDER BY id').all()).toEqual(before);expect((check.query('PRAGMA table_info(briefs)').all() as {name:string}[]).some(c=>c.name==='authorization_id')).toBe(true);check.close();}}finally{rmSync(dir,{recursive:true,force:true});}
  }
 });
+test('observed status-change time survives unchanged polls, declines, replay and server restart without inventing first-seen history',()=>{
+ const dir=mkdtempSync(join(tmpdir(),'status-change-')),path=join(dir,'db');let s=createStore(path);const a=s.issue('Status observation'),d=randomUUID(),sid=randomUUID();s.connect(a.id,d,sid);const id='a'.repeat(64),base=Date.now()-60000;
+ const send=(seq:number,status:string,offset:number,checked=true)=>{const e=event(seq);e.data.agentsChecked=checked;const data={...e.data,agents:[{id,status,confirmedAt:new Date(base+offset).toISOString()}]};const value={...e,data};s.telemetry.ingest(a.id,{deploymentId:d,sessionId:sid,events:[value]});return value;};
+ const agent=()=>s.telemetry.session(a.id,d,sid)!.snapshot.agents[0];
+ try{
+ send(1,'idle',0);expect(agent().statusChangedAt).toBeUndefined();send(2,'working',1000);const changed=new Date(base+1000).toISOString();expect(agent().statusChangedAt).toBe(changed);
+ const unchanged=send(3,'working',2000);expect(agent().statusChangedAt).toBe(changed);s.telemetry.ingest(a.id,{deploymentId:d,sessionId:sid,events:[unchanged]});expect(agent().statusChangedAt).toBe(changed);
+ send(4,'done',3000,false);expect(agent().statusChangedAt).toBeUndefined();send(5,'working',4000);expect(agent().statusChangedAt).toBe(changed);
+ s.close();s=createStore(path);expect(agent().statusChangedAt).toBe(changed);send(6,'done',5000);expect(agent().statusChangedAt).toBe(new Date(base+5000).toISOString());
+ send(7,'idle',100);expect(agent().statusChangedAt).toBeUndefined();send(8,'done',6000);expect(agent().statusChangedAt).toBe(new Date(base+5000).toISOString());
+ const next=randomUUID();s.connect(a.id,d,next);const e=event(1);s.telemetry.ingest(a.id,{deploymentId:d,sessionId:next,events:[{...e,data:{...e.data,agentsChecked:true,agents:[{id,status:'done',confirmedAt:new Date(base+6000).toISOString()}]}}]});expect(s.telemetry.session(a.id,d,next)!.snapshot.agents[0].statusChangedAt).toBeUndefined();
+ expect('statusHistory' in s.telemetry.session(a.id,d,sid)!.snapshot).toBe(false);
+ }finally{s.close();rmSync(dir,{recursive:true,force:true});}
+});

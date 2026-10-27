@@ -24,3 +24,9 @@ test('captured admitted label remains historical and a verified rule link uses t
 test('originating rule shows only captured name or identity ID, with no visible provenance decorations',()=>{
  const p:AgentProvenance={provider:'confluence-page',kind:'resource',ruleId:'stable-rule-id',resourceId:'123',admittedRule:{id:'stable-rule-id',name:'Readable historical name',source:'local'}};const view=render(<SessionAgents session={session(p)}/>);const label=view.getByText('Originating rule');expect(label.nextElementSibling!.textContent).toBe('Readable historical name');expect(view.queryByText('Agent scope')).toBeNull();expect(view.queryByText('Query family')).toBeNull();expect(view.queryByText('stable-rule-id')).toBeNull();expect(view.getByText('123')).toBeTruthy();expect(view.getByText('confluence-page')).toBeTruthy();const {admittedRule:_,...identity}=p;view.rerender(<SessionAgents session={session(identity)}/>);expect(view.getByText('Originating rule').nextElementSibling!.textContent).toBe('stable-rule-id');expect(view.getByText('stable-rule-id').getAttribute('title')).toContain('unknown');
 });
+
+test('agents sort by observed status change newest first, retain ties and put unknown history last',()=>{
+ const s=session(),original=s.events!.snapshot.agents[0]!;
+ s.events!.snapshot.agents=[{...original,id:'a'.repeat(64)},{...original,id:'b'.repeat(64),statusChangedAt:'2026-01-01T00:00:00.000Z'},{...original,id:'c'.repeat(64),statusChangedAt:'2026-01-02T00:00:00.000Z'},{...original,id:'d'.repeat(64),statusChangedAt:'2026-01-02T00:00:00.000Z'}];
+ const view=render(<SessionAgents session={s}/>);expect([...view.container.querySelectorAll('.servr-agent-row')].map(row=>row.textContent!.match(/Agent ([a-d]{12})/)![1])).toEqual(['c'.repeat(12),'d'.repeat(12),'b'.repeat(12),'a'.repeat(12)]);expect(s.events!.snapshot.agents[0]!.id).toBe('a'.repeat(64));expect(view.getByText('Status changed (observed): Unknown')).toBeTruthy();
+});
