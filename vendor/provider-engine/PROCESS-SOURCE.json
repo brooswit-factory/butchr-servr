@@ -4,7 +4,7 @@
   "inputs": {
     "package.json": "8079473bde9984322f9401a976e90bb9b4116aeca0fbdc8beb584b9c9ccb7f72",
     "bun.lock": "0fa8df73a2554c050a622b387cb419b154e3881f48cd46e98e1904f0e8be3a2c",
-    "scripts/build-provider-process.ts": "81a2c0705a3d0272f76637efb9122fd338b5241d3c627ea652d0c028c40e8bec",
+    "scripts/build-provider-process.ts": "021cb9ce731dd0769f97ef532f29fdea82a840165317db1dd968caea47c82c91",
     "scripts/verify-provider-process.ts": "1609aa52a6d586982989af646ee93d554ab53e9b570bbb7e002879f7ca46d746",
     "src/provider-process-entry.ts": "6a40224c65f1cd75eee1425c8a8bd3ba4957e1fad38f880a2d196e4ef74b3e76",
     "src/provider-process-input.ts": "7c77b532d8d2b0f3f0c9a3b08c968bfdbfc144e0e78ae5a3647e4476022455bf",
