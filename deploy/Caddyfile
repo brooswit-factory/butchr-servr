@@ -1,0 +1,34 @@
+{
+	admin off
+	acme_ca https://acme-v02.api.letsencrypt.org/directory
+	servers {
+		protocols h1 h2
+		max_header_size 16KiB
+		timeouts {
+			read_header 5s
+			read_body 5s
+			idle 2m
+		}
+	}
+}
+butchr.brooswit.nexus {
+	request_body {
+		max_size 1MB
+	}
+	reverse_proxy 127.0.0.1:7731 {
+		header_up -Forwarded
+		header_up Host butchr.brooswit.nexus
+		header_up X-Forwarded-Host butchr.brooswit.nexus
+		header_up X-Forwarded-Proto https
+		# Ignore supplied client-IP metadata; the application never trusts it.
+		header_up -X-Forwarded-For
+		transport http {
+			dial_timeout 3s
+			response_header_timeout 10s
+		}
+	}
+}
+
+http://butchr.brooswit.nexus {
+	redir https://butchr.brooswit.nexus{uri} permanent
+}

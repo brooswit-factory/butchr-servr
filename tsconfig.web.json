@@ -1,0 +1,1 @@
+{"extends":"./vendor/butchr/dashboard-app/tsconfig.json","include":["web","vendor/butchr/src/md.d.ts","vendor/butchr/src/py.d.ts"]}

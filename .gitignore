@@ -1,2 +1,14 @@
 runtime/
-node_modules/
+node_modules
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.pem
+*.key
+web-dist/
+web-dist-next/
+
+__pycache__/
+*.pyc

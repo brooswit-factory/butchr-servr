@@ -1,0 +1,2 @@
+/** Byte bounded, streaming UTF-8 decode: pipe boundaries are not character boundaries. */
+export async function readProviderProcessInput(input:AsyncIterable<Uint8Array>,maxBytes=131072):Promise<unknown>{const decoder=new TextDecoder('utf-8',{fatal:true});let text='',bytes=0;for await(const chunk of input){bytes+=chunk.byteLength;if(bytes>maxBytes)throw Error('Provider input bound');text+=decoder.decode(chunk,{stream:true});}text+=decoder.decode();return JSON.parse(text);}

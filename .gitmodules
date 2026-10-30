@@ -1,0 +1,3 @@
+[submodule "butchr-ui"]
+	path = vendor/butchr
+	url = https://github.com/brooswit-factory/butchr.git
