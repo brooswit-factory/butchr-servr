@@ -9,7 +9,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
   if(production&&!store.adminAuth.configured())throw Error("Configure the owner password locally before public hosting");
   const headers={...baseHeaders,...(production?{"strict-transport-security":"max-age=31536000"}:{})};
   let requests=0;
-  const streams=createEventStreams(store,production?{maxEventBytes:96_000_000,maxQueuedBytes:96_000_000,maxStreams:4,maxPerAuthorization:2}:undefined);
+  const streams=createEventStreams(store,production?{maxEventBytes:96_000_000,maxQueuedBytes:96_000_000}:undefined);
   const rate=requestRates();
   const providerTimer=setInterval(()=>void store.providerPolls.tick(),1000);providerTimer.unref();
   const json=(body:unknown,status=200)=>Response.json(body,{status,headers:{...headers,...(status===429?{"retry-after":"60"}:{})}});
@@ -29,7 +29,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         if(!streaming&&!req.headers.get("content-type")?.startsWith("application/json")) throw new Problem(415,"JSON required");
         const auth=store.authenticate(req.headers.get("authorization")?.replace(/^Bearer /,"")??null);
         rate(auth,240);
-        if(streaming){store.registered(auth,req.headers.get("x-butchr-deployment-id"),req.headers.get("x-butchr-session-id"));const providerProtocol=req.headers.get('x-butchr-provider-protocol');if(providerProtocol&&providerProtocol!=='1')throw new Problem(400,'Unsupported provider protocol');const response=streams.open(auth,req.signal,providerProtocol==='1'?{deploymentId:req.headers.get('x-butchr-deployment-id')!,sessionId:req.headers.get('x-butchr-session-id')!,providers:true}:undefined);if(production)response.headers.set("strict-transport-security","max-age=31536000");return response;}
+        if(streaming){const deploymentId=req.headers.get("x-butchr-deployment-id"),sessionId=req.headers.get("x-butchr-session-id");store.registered(auth,deploymentId,sessionId);const providerProtocol=req.headers.get('x-butchr-provider-protocol');if(providerProtocol&&providerProtocol!=='1')throw new Problem(400,'Unsupported provider protocol');const response=streams.open(auth,req.signal,{deploymentId:deploymentId!,sessionId:sessionId!,...(providerProtocol==='1'?{providers:true as const}:{})});if(production)response.headers.set("strict-transport-security","max-age=31536000");return response;}
         const body=await readJSON(req);if(url.pathname==='/v1/provider-reads'){store.registered(auth,body.deploymentId,body.sessionId);return json(store.providerPolls.set(auth,body.deploymentId,body.sessionId,body.subscription));}if(url.pathname==="/v1/instance-events"){const result=store.telemetry.ingest(auth,body);store.providerPolls.touch(auth,body.deploymentId,body.sessionId);return json(result);}
         const snapshot=store.connect(auth,body.deploymentId,body.sessionId);
         return json(url.pathname==="/v1/register"?{serverId:snapshot.serverId,authorizationId:auth,registered:true}:snapshot);

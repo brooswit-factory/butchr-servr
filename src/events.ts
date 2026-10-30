@@ -1,21 +1,27 @@
 import { randomUUID,createHash } from "node:crypto";
 import { Problem, type Store } from "./store.js";
 export const MAX_EVENT_BYTES = 96_000_000;
+export const MAX_STREAMS_PER_DEPLOYMENT = 2;
+type StreamInstance = {deploymentId:string;sessionId:string;providers?:true};
 /** Per server process: no replay log. Every open explicitly resynchronizes a full snapshot. */
-export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQueuedBytes:number;maxStreams?:number;maxPerAuthorization?:number}={maxEventBytes:MAX_EVENT_BYTES,maxQueuedBytes:192_000_000,maxStreams:8,maxPerAuthorization:2}){
+export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQueuedBytes:number}={maxEventBytes:MAX_EVENT_BYTES,maxQueuedBytes:192_000_000}){
  const queues=new Set<()=>number>();
  const digest=(value:unknown)=>createHash("sha256").update(JSON.stringify(value)).digest("hex");
  const active=new Map<string,Set<()=>void>>();
  const encode=new TextEncoder();
- function open(auth:string,signal:AbortSignal,instance?:{deploymentId:string;sessionId:string;providers:true}){
-  const count=[...active.values()].reduce((n,s)=>n+s.size,0);
-  if(count>=(limits.maxStreams??8)||(active.get(auth)?.size??0)>=(limits.maxPerAuthorization??2))throw new Problem(429,"Stream limit reached");
-  const epoch=randomUUID();let sequence=0,revision=`${epoch}:0`,initial:ReturnType<Store["delivery"]>|null=store.delivery(auth,instance),closed=false;
+ function open(auth:string,signal:AbortSignal,instance:StreamInstance){
+  store.registered(auth,instance.deploymentId,instance.sessionId);
+  // Both protocols and every registered session share their deployment's two slots.
+  // Authorization remains part of the key: identical deployment UUIDs cannot collide across owners.
+  const key=JSON.stringify([auth,instance.deploymentId]);
+  if((active.get(key)?.size??0)>=MAX_STREAMS_PER_DEPLOYMENT)throw new Problem(429,"Deployment stream limit reached");
+  const providerInstance=instance.providers?{deploymentId:instance.deploymentId,sessionId:instance.sessionId,providers:true as const}:undefined;
+  const epoch=randomUUID();let sequence=0,revision=`${epoch}:0`,initial:ReturnType<Store["delivery"]>|null=store.delivery(auth,providerInstance),closed=false;
   let hashes={briefs:digest(initial.briefs),remoteRules:digest(initial.remoteRules),providerReads:digest(initial.providerReads??null)};
   let controller:ReadableStreamDefaultController<Uint8Array>,unsubscribe=()=>{},timer:ReturnType<typeof setInterval>;
   const frames:Uint8Array[]=[];let pendingBytes=0,offset=0,waiting=false;const queuedBytes=()=>pendingBytes;
   function pump(){if(closed||!waiting||!frames.length)return;const frame=frames[0]!,end=Math.min(frame.byteLength,offset+65536),chunk=frame.slice(offset,end);offset=end;if(offset===frame.byteLength){pendingBytes-=frame.byteLength;frames.shift();offset=0;}waiting=false;controller.enqueue(chunk);}
-  function close(){if(closed)return;closed=true;unsubscribe();clearInterval(timer);signal.removeEventListener('abort',close);queues.delete(queuedBytes);frames.length=0;pendingBytes=0;active.get(auth)?.delete(close);if(!active.get(auth)?.size)active.delete(auth);try{controller.close();}catch{}}
+  function close(){if(closed)return;closed=true;unsubscribe();clearInterval(timer);signal.removeEventListener('abort',close);queues.delete(queuedBytes);frames.length=0;pendingBytes=0;active.get(key)?.delete(close);if(!active.get(key)?.size)active.delete(key);try{controller.close();}catch{}}
   function send(event:string,data:unknown,id?:string){
    if(closed)return;
    const frame=encode.encode(`${id?`id: ${id}\n`:''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -24,15 +30,15 @@ export function createEventStreams(store:Store,limits:{maxEventBytes:number;maxQ
    frames.push(frame);pendingBytes+=frame.byteLength;pump();
   }
   const stream=new ReadableStream<Uint8Array>({start(c){
-   controller=c;queues.add(queuedBytes);const group=active.get(auth)??new Set();group.add(close);active.set(auth,group);
+   controller=c;queues.add(queuedBytes);const group=active.get(key)??new Set();group.add(close);active.set(key,group);
    signal.addEventListener('abort',close,{once:true});
    unsubscribe=store.subscribe((changed,revoked)=>{
     if((changed!==auth&&changed!=='*')||closed)return;
     try{
     if(revoked){send('revoked',{});close();return;}
-    const next=store.delivery(auth,instance),patch:unknown[]=[];
+    const next=store.delivery(auth,providerInstance),patch:unknown[]=[];
     const nextHashes={briefs:digest(next.briefs),remoteRules:digest(next.remoteRules),providerReads:digest(next.providerReads??null)};
-    for(const path of (instance?['briefs','remoteRules','providerReads']:['briefs','remoteRules']) as ('briefs'|'remoteRules'|'providerReads')[])if(hashes[path]!==nextHashes[path])patch.push({op:'replace',path:`/${path}`,value:next[path]});
+    for(const path of (providerInstance?['briefs','remoteRules','providerReads']:['briefs','remoteRules']) as ('briefs'|'remoteRules'|'providerReads')[])if(hashes[path]!==nextHashes[path])patch.push({op:'replace',path:`/${path}`,value:next[path]});
     if(!patch.length)return;
     const baseRevision=revision;revision=`${epoch}:${++sequence}`;hashes=nextHashes;
     send('patch',{baseRevision,revision,patch},revision);
