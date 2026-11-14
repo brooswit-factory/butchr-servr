@@ -36,3 +36,34 @@ test('password boundary rejects seven characters and accepts eight without compl
  const setup=async(password:string)=>{const status=auth.status(new Request('http://fixture/'));return auth.login(new Request('http://fixture/',{method:'POST',headers:{cookie:status.cookie!.split(';')[0]!,'x-butchr-servr-csrf':status.body.csrf}}),{password},true);};
  try{await expect(setup('aaaaaaa')).rejects.toThrow('at least 8 characters');expect(auth.status(new Request('http://fixture/')).body.configured).toBe(false);expect((await setup('aaaaaaaa')).body.authenticated).toBe(true);}finally{db.close();}
 });
+
+test('remembered sessions opt in, survive restart, retain bounded idle/absolute expiry and revoke on logout',async()=>{
+ const db=new Database(':memory:');let time=1_000_000;let auth=createAdminAuth(db,()=>time);
+ const request=(cookie='',csrf='',method='POST')=>new Request('http://fixture/',{method,headers:{cookie,'x-butchr-servr-csrf':csrf}});
+ const login=async(rememberMe:unknown,setup=false)=>{const p=auth.status(request());return auth.login(request(p.cookie!.split(';')[0]!,p.body.csrf),{password:fixturePassword,rememberMe},setup);};
+ try{
+  const issued=await login(true,true),cookie=issued.cookie.split(';')[0]!;
+  expect(issued.cookie).toContain('Max-Age=2592000');expect(issued.cookie).toContain('HttpOnly; SameSite=Strict');
+  time+=9*60*60_000;auth=createAdminAuth(db,()=>time);
+  expect(auth.requireSession(request(cookie,'','GET'))).toBeTruthy();
+  // Issuing a normal session must not prune valid remembered sessions.
+  const normal=await login(false);expect(normal.cookie).toContain('Max-Age=28800');
+  expect(auth.requireSession(request(cookie,'','GET'))).toBeTruthy();
+  expect(auth.logout(request(cookie,issued.body.csrf)).cookie).toContain('Max-Age=0');
+  expect(()=>auth.requireSession(request(cookie))).toThrow('Login');
+  time+=60_001;
+  const idle=await login(true),idleCookie=idle.cookie.split(';')[0]!;
+  time+=7*24*60*60_000-1;expect(auth.requireSession(request(idleCookie,'','GET'))).toBeTruthy();
+  time+=1;expect(()=>auth.requireSession(request(idleCookie,'','GET'))).toThrow('Login');
+  const absolute=await login(true),absoluteCookie=absolute.cookie.split(';')[0]!;
+  for(let i=0;i<4;i++){time+=6*24*60*60_000;expect(auth.requireSession(request(absoluteCookie))).toBeTruthy();}
+  time+=6*24*60*60_000;expect(()=>auth.requireSession(request(absoluteCookie))).toThrow('Login');
+ }finally{db.close();}
+});
+test('legacy sessions migrate without gaining remembered privileges and malformed opt-in is rejected',async()=>{
+ const db=new Database(':memory:');db.exec('CREATE TABLE admin_sessions(token_hash TEXT PRIMARY KEY,csrf TEXT NOT NULL,created INTEGER NOT NULL,seen INTEGER NOT NULL)');
+ db.query('INSERT INTO admin_sessions VALUES (?,?,?,?)').run('legacy-hash','legacy-csrf',1,1);
+ const auth=createAdminAuth(db);expect((db.query('SELECT remembered FROM admin_sessions').get() as {remembered:number}).remembered).toBe(0);
+ const p=auth.status(new Request('http://fixture/'));
+ try{await expect(auth.login(new Request('http://fixture/',{method:'POST',headers:{cookie:p.cookie!.split(';')[0]!,'x-butchr-servr-csrf':p.body.csrf}}),{password:fixturePassword,rememberMe:'true'},true)).rejects.toThrow('boolean');}finally{db.close();}
+});

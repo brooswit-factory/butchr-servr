@@ -26,3 +26,25 @@ test('setup fields and guidance consistently use an eight-character minimum',asy
  for(const label of ['Password','Confirm password'])expect((view.getByLabelText(label) as HTMLInputElement).minLength).toBe(8);
  expect(view.getByText(/At least 8 characters/)).toBeTruthy();
 });
+
+test('remember choice is explicit, sent on login, disabled in flight and reset on logout',async()=>{
+ let authenticated=false,body:any,finish!:(r:Response)=>void;
+ globalThis.fetch=(async(path:unknown,options?:RequestInit)=>{
+  if(path==='/api/auth/login'){body=JSON.parse(String(options?.body));return await new Promise<Response>(resolve=>finish=resolve);}
+  if(path==='/api/auth/logout'){authenticated=false;return Response.json({ok:true});}
+  return response(authenticated);
+ }) as typeof fetch;
+ const view=render(<AuthGate>{()=> <p>Dashboard</p>}</AuthGate>);
+ await waitFor(()=>expect(view.getByRole('checkbox',{name:'Keep me logged in'})).toBeTruthy());
+ const checkbox=view.getByRole('checkbox',{name:'Keep me logged in'}) as HTMLInputElement;
+ expect(checkbox.checked).toBe(false);fireEvent.click(checkbox);expect(checkbox.checked).toBe(true);
+ expect(view.getByText(/up to 30 days/)).toBeTruthy();
+ fireEvent.change(view.getByLabelText('Password'),{target:{value:'Disposable fixture password'}});
+ await act(async()=>fireEvent.submit(view.getByRole('button',{name:'Log in'}).closest('form')!));
+ expect(body.rememberMe).toBe(true);expect(checkbox.disabled).toBe(true);
+ authenticated=true;await act(async()=>finish(response(true)));
+ await waitFor(()=>expect(view.getByText('Dashboard')).toBeTruthy());
+ await act(async()=>window.dispatchEvent(new Event('butchr-logout')));
+ await waitFor(()=>expect(view.getByRole('checkbox',{name:'Keep me logged in'})).toBeTruthy());
+ expect((view.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+});
