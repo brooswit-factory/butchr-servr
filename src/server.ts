@@ -4,6 +4,7 @@ import { createEventStreams } from "./events.js";
 import { isSameUidPeerAsync } from "./peer-uid.js";
 import { Problem, type Store } from "./store.js";
 const baseHeaders = {"cache-control":"no-store","x-content-type-options":"nosniff","referrer-policy":"no-referrer","content-security-policy":"default-src 'self'; script-src 'self'; style-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"};
+function isPanelDocument(path:string){return path==="/"||path==="/login"||path==="/setup"||path==="/management-keys"||path==="/authorizations"||path==="/briefs"||path==="/providers"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(path);}
 export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",import.meta.url),options:HostingOptions={}) {
   const configuredOrigin=publicOrigin(options.publicOrigin),production=!!configuredOrigin;
   if(production&&!store.adminAuth.configured())throw Error("Configure the owner password locally before public hosting");
@@ -43,7 +44,11 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         store.managementKeys.touch(key.id);
       }
       const o=req.headers.get("origin"), site=req.headers.get("sec-fetch-site");
-      if((o && o!==origin)||(site && !["same-origin","none"].includes(site))) throw new Problem(403,"Same origin required");
+      // A cross-site link may load the public SPA shell. Never relax API,
+      // subresource, iframe or mutation guards, or an explicit Origin mismatch.
+      const documentNavigation=(site==='cross-site'||site==='same-site')&&req.method==='GET'&&isPanelDocument(url.pathname)
+        &&req.headers.get('sec-fetch-mode')==='navigate'&&req.headers.get('sec-fetch-dest')==='document';
+      if((o && o!==origin)||(site && !["same-origin","none"].includes(site)&&!documentNavigation)) throw new Problem(403,"Same origin required");
       if(!["GET","HEAD"].includes(req.method)&& ((!bearer&&o!==origin)||!req.headers.get("content-type")?.startsWith("application/json")))throw new Problem(403,"Same-origin JSON required");
       const authResponse=(result:{body:unknown;cookie:string|null})=>{const response=json(result.body);if(result.cookie)response.headers.set('set-cookie',result.cookie+(production?'; Secure':''));return response;};
       if(req.method==='GET'&&url.pathname==='/api/auth/session')return authResponse(store.adminAuth.status(req));
@@ -89,7 +94,7 @@ export function serve(store: Store, port=7731,webRoot=new URL("../web-dist/",imp
         const name=url.pathname.slice(8);if(!/^[a-zA-Z0-9_.-]+$/.test(name))throw new Problem(404,"Asset not found");
         const file=Bun.file(new URL(`assets/${name}`,webRoot));if(!await file.exists())throw new Problem(404,"Asset not found");return new Response(file,{headers});
       }
-      if(req.method==="GET"&&(url.pathname==="/"||url.pathname==="/login"||url.pathname==="/setup"||url.pathname==="/management-keys"||url.pathname==="/authorizations"||url.pathname==="/briefs"||url.pathname==="/providers"||/^\/authorizations\/[0-9a-f-]{36}(?:\/(?:rules|deployments|security)(?:\/[0-9a-f-]{36}\/sessions(?:\/[0-9a-f-]{36}(?:\/(?:agents|status))?)?)?)?$/.test(url.pathname))){
+      if(req.method==="GET"&&isPanelDocument(url.pathname)){
         const file=Bun.file(new URL("web/control-panel.html",webRoot));if(!await file.exists())throw new Problem(503,"Build the control panel web app before starting it");return new Response(file,{headers});
       }
       return json({error:"Not found"},404);

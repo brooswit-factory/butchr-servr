@@ -14,3 +14,5 @@
 
 .servr-shell .servr-page.servr-authorization>h1{height:auto;min-height:0}.servr-authorization .servr-tabs[aria-label="Authorization sections"]{margin:0}.servr-authorization .servr-deployment-panel{margin-top:0;padding-top:0}.servr-authorization .servr-tabs[aria-label="Deployment sections"]{margin-top:0}
 .servr-session-view .servr-tabs{margin:0}.servr-session-view [role="tabpanel"]{margin-top:0;padding-top:0}.servr-session-view [role="tabpanel"]>p:first-child{margin-top:0}
+
+.servr-auth label.servr-auth-remember{display:flex;align-items:center;gap:.6rem}.servr-auth-remember input{width:1.1rem;height:1.1rem;margin:0;padding:0}
